@@ -1,0 +1,328 @@
+/* app/page.module.css */
+
+:root {
+  --bg: #070a0f;
+  --panel: rgba(12, 16, 22, 0.78);
+  --panel2: rgba(12, 16, 22, 0.92);
+  --border: rgba(255, 255, 255, 0.14);
+  --text: rgba(255, 255, 255, 0.92);
+  --muted: rgba(255, 255, 255, 0.68);
+  --muted2: rgba(255, 255, 255, 0.55);
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+
+  --accent: #00ffd0;
+  --accent2: #00c8ff;
+  --warn: #ffb020;
+  --danger: #ff5a6a;
+
+  --radius: 16px;
+  --radius2: 12px;
+}
+
+.page {
+  height: 100vh;
+  width: 100%;
+  position: relative;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* Top bar */
+.topBar {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.brandTitle {
+  font-weight: 900;
+  font-size: 14px;
+  letter-spacing: 0.2px;
+  color: var(--text);
+}
+
+.brandSub {
+  font-size: 11px;
+  color: var(--muted2);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Buttons */
+.btn {
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  transition: transform 0.06s ease, background 0.12s ease, border 0.12s ease;
+  user-select: none;
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btnPrimary {
+  border-color: rgba(0, 255, 208, 0.35);
+  background: rgba(0, 255, 208, 0.10);
+}
+
+.btnDanger {
+  border-color: rgba(255, 90, 106, 0.32);
+  background: rgba(255, 90, 106, 0.10);
+}
+
+.btnDisabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Floating panel / bottom sheet */
+.panel {
+  position: absolute;
+  z-index: 15;
+  top: 78px;
+  left: 12px;
+  width: 380px;
+  max-height: calc(100vh - 92px);
+  overflow: auto;
+
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 6px 10px 6px;
+}
+
+.panelTitle {
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--text);
+}
+
+.panelPillRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Segmented control */
+.segment {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.segmentBtn {
+  padding: 7px 10px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.segmentBtnActive {
+  color: var(--text);
+  border-color: rgba(0, 255, 208, 0.30);
+  background: rgba(0, 255, 208, 0.10);
+}
+
+/* Inputs */
+.input {
+  width: 100%;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  outline: none;
+  font-size: 13px;
+}
+
+.textarea {
+  width: 100%;
+  height: 90px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  outline: none;
+  font-size: 13px;
+  resize: none;
+}
+
+/* Cards */
+.card {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.cardTitleRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cardTitle {
+  font-weight: 900;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.cardMeta {
+  font-size: 11px;
+  color: var(--muted2);
+  font-weight: 700;
+}
+
+.cardText {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+/* Legend */
+.legendGrid {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px 10px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+/* Error */
+.error {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 90, 106, 0.35);
+  background: rgba(255, 90, 106, 0.12);
+  color: rgba(255, 220, 225, 0.95);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Modal */
+.modalOverlay {
+  position: absolute;
+  z-index: 50;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+
+.modal {
+  width: min(460px, calc(100% - 24px));
+  max-height: 85vh;
+  overflow: auto;
+
+  border-radius: 18px;
+  background: var(--panel2);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 22px 80px rgba(0, 0, 0, 0.62);
+}
+
+.modalHeader {
+  padding: 12px 12px 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.modalTitle {
+  font-weight: 900;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.modalBody {
+  padding: 12px;
+}
+
+.photoPreview {
+  margin-top: 10px;
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Mobile behavior */
+@media (max-width: 760px) {
+  .topBar {
+    top: 10px;
+    left: 10px;
+    right: 10px;
+  }
+
+  .panel {
+    top: auto;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    width: auto;
+    max-height: 55vh;
+  }
+}

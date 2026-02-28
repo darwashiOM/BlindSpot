@@ -6,12 +6,40 @@ import maplibregl from "maplibre-gl";
 import DeckGL from "@deck.gl/react";
 import { HexagonLayer } from "@deck.gl/aggregation-layers";
 import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
-import { latLngToCell, cellToBoundary, gridDisk, cellToLatLng, cellToParent } from "h3-js";
+import { latLngToCell, cellToBoundary, gridDisk, cellToLatLng } from "h3-js";
 import { FlyToInterpolator } from "@deck.gl/core";
 
 type Pt = { lat: number; lon: number };
 
+type PlaceKind =
+  | "police"
+  | "mall"
+  | "mcd"
+  | "park"
+  | "cafe"
+  | "library"
+  | "community_centre"
+  | "community_hotspot";
+type Place = {
+  id: string;
+  kind: PlaceKind;
+  name?: string;
+  lat: number;
+  lon: number;
+};
 
+type RecommendItem = {
+  place: Place;
+  score: number;
+  distance_m: number;
+  h3: string;
+  cameras_in_k1: number;
+  cameras_in_cell: number;
+  report_yes: number;
+  report_no: number;
+  conflict: boolean;
+  reasons: string[];
+};
 
 function bboxFromMap(map: maplibregl.Map) {
   const b = map.getBounds();
@@ -22,26 +50,36 @@ function bboxFromMap(map: maplibregl.Map) {
   return [south, west, north, east].map((x) => Number(x.toFixed(6))).join(",");
 }
 
-
-
-function getCameraCountsForH3(points: Pt[], h3Index: string, k = 1) {
+function getCameraCountsForH3(points: Pt[], h3Index: string, res: number, k = 1) {
   // Cameras exactly inside the clicked hex
-  const inCell = points.filter((p) => latLngToCell(p.lat, p.lon, REPORT_RES) === h3Index).length;
+  const inCell = points.filter((p) => latLngToCell(p.lat, p.lon, res) === h3Index).length;
 
   // Cameras in nearby hexes (k=1 means neighbors)
   const nearbySet = new Set(gridDisk(h3Index, k));
-  const nearby = points.filter((p) => nearbySet.has(latLngToCell(p.lat, p.lon, REPORT_RES))).length;
+  const nearby = points.filter((p) => nearbySet.has(latLngToCell(p.lat, p.lon, res))).length;
 
   return { inCell, nearby };
 }
 
+
+function kindLabel(k: PlaceKind) {
+  if (k === "community_hotspot") return "Community confirmed area";
+  if (k === "police") return "Police station";
+  if (k === "mall") return "Mall";
+  if (k === "park") return "Park";
+  if (k === "cafe") return "Cafe";
+  if (k === "library") return "Library";
+  if (k === "community_centre") return "Community center";
+  return "McDonald’s";
+}
+
+
 // Helper to draw a single H3 hex
 function h3CellToFeature(h3Index: string, props: Record<string, any> = {}) {
-  const boundary: any[] = cellToBoundary(h3Index, true); // already [lng, lat]
+  const boundary: any[] = cellToBoundary(h3Index, true);
 
   const coords = boundary.map((pt: any) => {
-    // supports both tuple output and object output, just in case
-    if (Array.isArray(pt)) return [Number(pt[0]), Number(pt[1])]; // [lng, lat]
+    if (Array.isArray(pt)) return [Number(pt[0]), Number(pt[1])];
     if (pt && typeof pt === "object") return [Number(pt.lng), Number(pt.lat)];
     return pt;
   });
@@ -97,67 +135,12 @@ async function fileToCompressedDataUrl(
 
   return out;
 }
-
-
-function buildDetailedTtsText(opts: {
-  reportCount: number;
-  signageCount: number;
-  camerasInCell: number;
-  camerasNearby: number;
-  mode: "safety";
-  signageText?: string | null;
-}) {
-  const { reportCount, signageCount, camerasInCell, camerasNearby, mode, signageText } = opts;
-
-  const camLine =
-    camerasInCell > 0
-      ? `Looks like the map has ${camerasInCell} camera marker${camerasInCell === 1 ? "" : "s"} right here.`
-      : camerasNearby > 0
-        ? `The map shows cameras close by, but not directly in this spot.`
-        : `The map doesn’t show any cameras here, but it can miss things.`;
-
-  const reportLine =
-    reportCount === 0
-      ? `No one has dropped a report here yet.`
-      : reportCount === 1
-        ? `There’s 1 community report for this area.`
-        : `There are ${reportCount} community reports for this area.`;
-
-  const confidenceLine =
-    reportCount >= 5
-      ? `At this point it’s basically community confirmed.`
-      : reportCount >= 2
-        ? `A couple people said the same thing, so it’s probably legit.`
-        : reportCount === 1
-          ? `It’s just one report though, so take it lightly.`
-          : `If you’re seeing something, you can be the first to report it.`;
-
-  const signLine =
-    signageCount === 0
-      ? `No one mentioned signs.`
-      : signageCount === 1
-        ? `Someone mentioned a sign about recording.`
-        : `A few reports mentioned signage.`;
-
-  const signTextLine =
-    signageText && signageText.trim()
-      ? `The sign says: ${signageText.trim().slice(0, 90)}.`
-      : "";
-
-  const modeLine = ""
-  const full = `${camLine} ${reportLine} ${confidenceLine} ${signLine} ${signTextLine} ${modeLine}`
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return full.slice(0, 260);
-}
-
 export default function Home() {
   const mapRef = useRef<MapRef | null>(null);
   const refreshTimer = useRef<number | null>(null);
   const refreshSeq = useRef(0);
-
-  
+  const recAbortRef = useRef<AbortController | null>(null);
+  const recSeq = useRef(0);
 
   const [viewState, setViewState] = useState({
     longitude: -75.75,
@@ -167,16 +150,16 @@ export default function Home() {
     pitch: 0,
   });
 
-
   const reportRes =
     viewState.zoom >= 15 ? 12 :
     viewState.zoom >= 12 ? 10 :
     8;
 
   const pickRes = reportRes;
-
   const mode = "safety";
+
   const [points, setPoints] = useState<Pt[]>([]);
+  const [places, setPlaces] = useState<Place[]>([]);
   const [loading, setLoading] = useState(false);
   const [submittingReport, setSubmittingReport] = useState(false);
   const [booting, setBooting] = useState(true);
@@ -201,19 +184,23 @@ export default function Home() {
 
   const [lastError, setLastError] = useState<string | null>(null);
 
+  // New Recommender UI State
+  const [askText, setAskText] = useState("Selling something on Facebook Marketplace");
+  const [recommending, setRecommending] = useState(false);
+  const [recIntentLabel, setRecIntentLabel] = useState<string | null>(null);
+  const [recommendations, setRecommendations] = useState<RecommendItem[]>([]);
+
+  // UPDATED: Changed from absolute positioning to a flex sidebar layout
   const panelStyle: React.CSSProperties = {
-    position: "absolute",
-    zIndex: 10,
-    top: 12,
-    left: 12,
-    width: 380,
-    padding: 14,
-    borderRadius: 12,
-    background: "rgba(10, 12, 16, 0.92)",
+    flex: "0 0 380px", // Fixed width sidebar
+    height: "100vh",
+    padding: "20px",
+    background: "#0a0c10",
     color: "#ffffff",
-    border: "1px solid rgba(255,255,255,0.12)",
-    boxShadow: "0 12px 30px rgba(0,0,0,0.35)",
-    backdropFilter: "blur(10px)",
+    borderRight: "1px solid rgba(255,255,255,0.12)",
+    boxShadow: "4px 0 24px rgba(0,0,0,0.35)",
+    overflowY: "auto",
+    zIndex: 10,
   };
 
   const btn = (active?: boolean): React.CSSProperties => ({
@@ -253,8 +240,6 @@ export default function Home() {
 
   function pickBestVoice() {
     const voices = window.speechSynthesis.getVoices();
-
-    // Prefer higher quality English voices on macOS / Chrome
     const preferred = [
       "Samantha",
       "Karen",
@@ -269,7 +254,6 @@ export default function Home() {
       if (v) return v;
     }
 
-    // Otherwise pick any en-US/en-GB voice
     return voices.find((v) => v.lang?.startsWith("en-US")) ||
            voices.find((v) => v.lang?.startsWith("en-GB")) ||
            voices[0] ||
@@ -291,7 +275,6 @@ export default function Home() {
           ? reportSummary.trim()
           : "People have reported in this area, but there is no summary yet.";
 
-    // This is based on your current source (OpenStreetMap camera tags)
     const mapLine =
       camerasInCell > 0
         ? "Map data shows camera markers right here."
@@ -304,7 +287,6 @@ export default function Home() {
   }
   
   async function speakBrowser(text: string) {
-    // Some browsers load voices async
     const ensureVoices = () =>
       new Promise<void>((resolve) => {
         const v = window.speechSynthesis.getVoices();
@@ -314,41 +296,18 @@ export default function Home() {
       });
 
     await ensureVoices();
-
-    window.speechSynthesis.cancel(); // stop any previous speech
+    window.speechSynthesis.cancel();
 
     const u = new SpeechSynthesisUtterance(text);
     const voice = pickBestVoice();
     if (voice) u.voice = voice;
 
-    u.rate = 1.04;   // smooth
-    u.pitch = 1.02;  // less robotic
+    u.rate = 1.04;
+    u.pitch = 1.02;
     u.volume = 1.0;
 
     window.speechSynthesis.speak(u);
   }
-
-    // CHANGE: build heavy GeoJSON only when the underlying data changes
-  const reportGeo = useMemo(() => {
-    return {
-      type: "FeatureCollection",
-      features: reportCells.map((c) => h3CellToFeature(c.h3_index, c as any)),
-    };
-  }, [reportCells]);
-
-  const selectedGeo = useMemo(() => {
-    return {
-      type: "FeatureCollection",
-      features: selected ? [h3CellToFeature(selected.h3)] : [],
-    };
-  }, [selected]);
-
-  const hoveredGeo = useMemo(() => {
-    return {
-      type: "FeatureCollection",
-      features: hovered ? [h3CellToFeature(hovered.h3)] : [],
-    };
-  }, [hovered]);
 
   async function playTTS(text: string) {
     const res = await fetch("/api/tts", {
@@ -396,128 +355,246 @@ export default function Home() {
           transitionInterpolator: new FlyToInterpolator(),
         }));
 
-        // after fly animation is done, then fetch once
         window.setTimeout(() => {
           refresh();
           setBooting(false);
-        }, 1800); // 1400 transition + extra buffer
+        }, 1800);
       },
       (err) => {
-        // If user denies location, keep overlay of
-
         console.log("geolocation error:", err?.message);
+        setBooting(false);
       },
       { enableHighAccuracy: true, timeout: 8000 }
     );
   }
 
   async function refresh() {
-  const map = mapRef.current?.getMap();
-  if (!map) return;
+    const map = mapRef.current?.getMap();
+    if (!map) return;
 
-  const mySeq = ++refreshSeq.current;
+    const mySeq = ++refreshSeq.current;
 
-  // cancel any previous in-flight refresh
-  abortRef.current?.abort();
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setLoading(true);
+    setLastError(null);
+
+    const bbox = bboxFromMap(map);
+
+    try {
+      const wantPlaces = viewState.zoom >= 12;
+
+      const [camsRes, repRes, placesRes] = await Promise.all([
+        fetch(`/api/cameras?bbox=${encodeURIComponent(bbox)}`, { signal: controller.signal }),
+        fetch(`/api/report?bbox=${encodeURIComponent(bbox)}&res=${reportRes}`, { signal: controller.signal }),
+        wantPlaces 
+          ? fetch(`/api/places?bbox=${encodeURIComponent(bbox)}`, { signal: controller.signal }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+
+      if (mySeq !== refreshSeq.current) return;
+
+      if (!camsRes.ok) {
+        const t = await camsRes.text().catch(() => "");
+        throw new Error(`cameras failed (${camsRes.status}): ${t.slice(0, 200)}`);
+      }
+      const camsJson = await camsRes.json();
+      if (mySeq !== refreshSeq.current) return;
+      setPoints(camsJson.points || []);
+
+      if (!repRes.ok) {
+        const t = await repRes.text().catch(() => "");
+        throw new Error(`reports failed (${repRes.status}): ${t.slice(0, 200)}`);
+      }
+      const repJson = await repRes.json();
+      if (mySeq !== refreshSeq.current) return;
+      setReportCells(repJson.cells || []);
+
+      if (placesRes && placesRes.ok) {
+        const placesJson = await placesRes.json();
+        if (mySeq === refreshSeq.current) setPlaces(placesJson.places || []);
+      } else if (!wantPlaces) {
+        setPlaces([]);
+      }
+
+    } catch (e: any) {
+      if (e?.name === "AbortError") return;
+      if (mySeq !== refreshSeq.current) return;
+      console.error(e);
+      setLastError(String(e?.message || e));
+    } finally {
+      if (mySeq === refreshSeq.current) setLoading(false);
+    }
+  }
+
+  async function runRecommend() {
+  const mySeq = ++recSeq.current;
+
+  // cancel any previous recommend call
+  recAbortRef.current?.abort();
   const controller = new AbortController();
-  abortRef.current = controller;
-
-  setLoading(true);
-  setLastError(null);
-
-  const bbox = bboxFromMap(map);
+  recAbortRef.current = controller;
 
   try {
-    const [camsRes, repRes] = await Promise.all([
-      fetch(`/api/cameras?bbox=${encodeURIComponent(bbox)}`, { signal: controller.signal }),
-      fetch(`/api/report?bbox=${encodeURIComponent(bbox)}&res=${reportRes}`, { signal: controller.signal }),
-    ]);
+    setRecommending(true);
+    setLastError(null);
 
-    if (mySeq !== refreshSeq.current) return;
+    const lat = viewState.latitude;
+    const lon = viewState.longitude;
 
-    if (!camsRes.ok) {
-      const t = await camsRes.text().catch(() => "");
-      throw new Error(`cameras failed (${camsRes.status}): ${t.slice(0, 200)}`);
-    }
-    const camsJson = await camsRes.json();
-    if (mySeq !== refreshSeq.current) return;
-    setPoints(camsJson.points || []);
+    // optional: hard timeout (prevents hanging forever)
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
 
-    if (!repRes.ok) {
-      const t = await repRes.text().catch(() => "");
-      throw new Error(`reports failed (${repRes.status}): ${t.slice(0, 200)}`);
-    }
-    const repJson = await repRes.json();
-    if (mySeq !== refreshSeq.current) return;
-    setReportCells(repJson.cells || []);
+    const res = await fetch("/api/recommend", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: askText, lat, lon, maxResults: 5 }),
+      signal: controller.signal,
+    });
+
+    window.clearTimeout(timeoutId);
+
+    // If a newer request started, ignore this one
+    if (mySeq !== recSeq.current) return;
+
+    const json = await res.json().catch(() => ({}));
+
+    if (!res.ok) throw new Error(json?.error || `recommend failed (${res.status})`);
+    if (json?.error) throw new Error(json.error);
+
+    setRecIntentLabel(String(json?.intentLabel || "Recommendation"));
+    setRecommendations(Array.isArray(json?.results) ? json.results : []);
   } catch (e: any) {
-    if (e?.name === "AbortError") return; // ignore cancelled requests
-    if (mySeq !== refreshSeq.current) return;
+    // key part: ignore aborts
+    if (e?.name === "AbortError" || String(e?.message || "").toLowerCase().includes("aborted")) {
+      return;
+    }
+
     console.error(e);
     setLastError(String(e?.message || e));
+    setRecommendations([]);
+    setRecIntentLabel(null);
   } finally {
-    if (mySeq === refreshSeq.current) setLoading(false);
+    // only stop spinner if this is still the latest call
+    if (mySeq === recSeq.current) setRecommending(false);
   }
 }
 
+  // Memoize heavy GeoJSON
+  const reportGeo = useMemo(() => {
+    return {
+      type: "FeatureCollection",
+      features: reportCells.map((c) => h3CellToFeature(c.h3_index, c as any)),
+    };
+  }, [reportCells]);
+
+  const selectedGeo = useMemo(() => {
+    return {
+      type: "FeatureCollection",
+      features: selected ? [h3CellToFeature(selected.h3)] : [],
+    };
+  }, [selected]);
+
+  const hoveredGeo = useMemo(() => {
+    return {
+      type: "FeatureCollection",
+      features: hovered ? [h3CellToFeature(hovered.h3)] : [],
+    };
+  }, [hovered]);
+
+  const recLayerData = useMemo(() => {
+    return recommendations.map((r) => r.place);
+  }, [recommendations]);
+
   const layers = useMemo(() => {
-    if (booting) {
-      // keep it light while we locate + fly
-      return [];
-    }
+    if (booting) return [];
 
     const mapLayers = [];
 
+    mapLayers.push(
+      new GeoJsonLayer({
+        id: "hovered-hex",
+        data: hoveredGeo as any,
+        pickable: true,
+        stroked: true,
+        filled: false,
+        lineWidthMinPixels: 3,
+        getLineColor: [0, 255, 255, 220],
+        parameters: { depthTest: false },
+      })
+    );
 
-        mapLayers.push(
-          new GeoJsonLayer({
-            id: "hovered-hex",
-            data: hoveredGeo as any,
-            pickable: true,
-            stroked: true,
-            filled: false,
-            lineWidthMinPixels: 3,
-            getLineColor: [0, 255, 255, 220],
-            parameters: { depthTest: false },
-          })
-        );
+    if (places && places.length > 0) {
+      const placeRadius =
+        viewState.zoom >= 16 ? 22 :
+        viewState.zoom >= 14 ? 28 :
+        34;
 
-    // Dynamic Camera Radius based on Zoom Level
+      mapLayers.push(
+        new ScatterplotLayer<Place>({
+          id: "places-layer",
+          data: places,
+          getPosition: (d) => [Number(d.lon), Number(d.lat)],
+          getFillColor: () => [0, 255, 208, 180],
+          getRadius: placeRadius,
+          radiusMinPixels: 4,
+          getLineColor: [0, 0, 0, 120],
+          lineWidthMinPixels: 1,
+          stroked: true,
+          pickable: true,
+        })
+      );
+    }
+
+    if (recLayerData.length > 0) {
+      mapLayers.push(
+        new ScatterplotLayer<Place>({
+          id: "recommendations",
+          data: recLayerData,
+          pickable: false,
+          getPosition: (d) => [d.lon, d.lat],
+          getRadius: 44,
+          radiusUnits: "pixels",
+          getFillColor: [0, 0, 0, 0],
+          getLineColor: [0, 255, 200, 240],
+          lineWidthMinPixels: 4,
+          stroked: true,
+        })
+      );
+    }
+
     const cameraRadius =
       viewState.zoom >= 17 ? 18 :
       viewState.zoom >= 15 ? 28 :
       60;
 
-    // 2. Camera Layers
-    if (viewState.zoom >= 13 && points && points.length > 0) {
+    if (viewState.zoom >= 13 && points && points.length > 0 && mode === "safety") {
       const validPoints = points.filter(p => p.lat != null && p.lon != null);
-      
       if (validPoints.length > 0) {
-        if (mode === "safety") {
-          mapLayers.push(
-            new HexagonLayer<Pt>({
-              id: "surveillance-hex",
-              data: validPoints,
-              getPosition: (d) => [Number(d.lon), Number(d.lat)],
-              radius: cameraRadius,
-              extruded: false,
-              pickable: true,
-              opacity: 0.35,
-              colorRange: [
-                [0, 160, 0],
-                [0, 160, 0],
-                [0, 160, 0],
-                [0, 160, 0],
-                [0, 160, 0],
-                [0, 160, 0],
-              ],
-            })
-          );
-        }
+        mapLayers.push(
+          new HexagonLayer<Pt>({
+            id: "surveillance-hex",
+            data: validPoints,
+            getPosition: (d) => [Number(d.lon), Number(d.lat)],
+            radius: cameraRadius,
+            extruded: false,
+            pickable: true,
+            opacity: 0.35,
+            colorRange: [
+              [0, 160, 0],
+              [0, 160, 0],
+              [0, 160, 0],
+              [0, 160, 0],
+              [0, 160, 0],
+              [0, 160, 0],
+            ],
+          })
+        );
       }
     }
 
-    // 3. Community Reports Layer
     mapLayers.push(
       new GeoJsonLayer({
         id: "community-reports",
@@ -527,29 +604,26 @@ export default function Home() {
         filled: true,
         getLineColor: [0, 0, 0, 170],
         getFillColor: (f: any) => {
-        const yes = f.properties.camera_present_count || 0; // cameras reported
-        const no = f.properties.camera_absent_count || 0;   // no cameras reported
+          const yes = f.properties.camera_present_count || 0;
+          const no = f.properties.camera_absent_count || 0;
 
-        const conflict = yes > 0 && no > 0;
-        if (conflict) return [255, 0, 255, 160]; // conflict
+          const conflict = yes > 0 && no > 0;
+          if (conflict) return [255, 0, 255, 160];
 
-        // Cameras confirmed
-        if (yes >= 5) return [140, 0, 255, 180];
-        if (yes >= 2) return [255, 140, 0, 165];
-        if (yes >= 1) return [255, 235, 0, 155];
+          if (yes >= 5) return [140, 0, 255, 180];
+          if (yes >= 2) return [255, 140, 0, 165];
+          if (yes >= 1) return [255, 235, 0, 155];
 
-        // Low monitoring warning
-        if (no >= 5) return [255, 0, 0, 190];
-        if (no >= 2) return [255, 60, 60, 150];
-        if (no >= 1) return [255, 120, 120, 120];
+          if (no >= 5) return [255, 0, 0, 190];
+          if (no >= 2) return [255, 60, 60, 150];
+          if (no >= 1) return [255, 120, 120, 120];
 
-        return [0, 0, 0, 0];
-      },
+          return [0, 0, 0, 0];
+        },
         lineWidthMinPixels: 2,
       })
     );
 
-    // 4. Selected Hex Layer (Bright cyan outline to sit on top)
     mapLayers.push(
       new GeoJsonLayer({
         id: "selected-hex",
@@ -560,15 +634,18 @@ export default function Home() {
         lineWidthMinPixels: 5,
         getFillColor: [0, 200, 255, 90],
         getLineColor: [0, 200, 255, 255],
-        parameters: { depthTest: false }, // this is the key
+        parameters: { depthTest: false },
       })
     );
 
     return mapLayers;
-  }, [booting, points, reportCells, selected, hovered, viewState.zoom, mode]);
+  }, [booting, points, places, reportCells, selected, hovered, viewState.zoom, mode, recLayerData]);
 
+  // UPDATED: Main wrapper is now a full-screen flex container
   return (
-    <div style={{ height: "100vh" }}>
+    <div style={{ display: "flex", width: "100vw", height: "100vh", overflow: "hidden", background: "#000" }}>
+      
+      {/* Left Sidebar Layout */}
       <div style={panelStyle}>
         <div style={{ fontWeight: 800, fontSize: 16 }}>Blind Spot</div>
 
@@ -581,8 +658,98 @@ export default function Home() {
           </button>
         </div>
 
+        {/* --- AI Recommendations UI --- */}
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>Ask for a safe spot</div>
+          <input
+            value={askText}
+            onChange={(e) => setAskText(e.target.value)}
+            placeholder="Example: Selling something on Facebook Marketplace"
+            style={{
+              width: "100%",
+              padding: "10px 10px",
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.18)",
+              background: "rgba(255,255,255,0.06)",
+              color: "white",
+              outline: "none",
+              fontSize: 13,
+            }}
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <button style={btn(false)} onClick={runRecommend} disabled={recommending}>
+              {recommending ? "Thinking..." : "Suggest spots"}
+            </button>
+            <button
+              style={btn(false)}
+              onClick={() => {
+                setRecommendations([]);
+                setRecIntentLabel(null);
+              }}
+            >
+              Clear suggestions
+            </button>
+          </div>
 
-        {/* Legend */}
+          {recIntentLabel && (
+            <div style={{ ...smallText, marginTop: 10 }}>
+              <b>{recIntentLabel}</b> (based on map camera markers + community reports)
+            </div>
+          )}
+
+          {recommendations.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              {recommendations.map((r) => {
+                const name = r.place.name || kindLabel(r.place.kind);
+                const shortReasons = r.reasons.slice(0, 2).join(" • ");
+                const dist = Math.round(r.distance_m);
+                return (
+                  <div
+                    key={r.place.id}
+                    style={{
+                      marginTop: 8,
+                      padding: 10,
+                      borderRadius: 10,
+                      border: "1px solid rgba(255,255,255,0.14)",
+                      background: "rgba(255,255,255,0.05)",
+                    }}
+                  >
+                    <div style={{ fontWeight: 800, fontSize: 13 }}>
+                      {name} <span style={{ fontWeight: 600, opacity: 0.75 }}>({dist}m)</span>
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>
+                      {kindLabel(r.place.kind)} • {shortReasons}
+                    </div>
+                    <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
+                      Cameras nearby: {r.cameras_in_k1} • Reports: {r.report_yes + r.report_no}
+                      {r.conflict ? " • conflict" : ""}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      <button
+                        style={btn(false)}
+                        onClick={() => {
+                          setViewState((v) => ({
+                            ...v,
+                            latitude: r.place.lat,
+                            longitude: r.place.lon,
+                            zoom: Math.max(v.zoom, 15),
+                            transitionDuration: 900,
+                            transitionInterpolator: new FlyToInterpolator(),
+                          }));
+                        }}
+                      >
+                        Fly to
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* --- Legend --- */}
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>Legend</div>
 
@@ -605,17 +772,17 @@ export default function Home() {
 
           <div style={legendRow}>
             <span style={swatch("rgba(255, 235, 0, 0.55)")} />
-            <span>{"Yellow cell: 1 community report in this H3 area."}</span>
+            <span>Yellow cell: 1 community report in this H3 area.</span>
           </div>
 
           <div style={legendRow}>
             <span style={swatch( "rgba(255, 140, 0, 0.60)")} />
-            <span>{"Orange cell: 2 to 4 reports (more confidence)."}</span>
+            <span>Orange cell: 2 to 4 reports (more confidence).</span>
           </div>
 
           <div style={legendRow}>
             <span style={swatch("rgba(140, 0, 255, 0.70)")} />
-            <span>{"Purple cell: 5 or more reports (community confirmed)."}</span>
+            <span>Purple cell: 5 or more reports (community confirmed).</span>
           </div>
           
           <div style={legendRow}>
@@ -626,6 +793,27 @@ export default function Home() {
           <div style={legendRow}>
             <span style={swatch("rgba(0, 200, 255, 0.35)")} />
             <span>Cyan outline: currently selected cell.</span>
+          </div>
+          
+          <div style={legendRow}>
+            <span style={swatch("rgba(0, 255, 200, 0.75)")} />
+            <span>Teal rings: AI recommended spots.</span>
+          </div>
+
+          {/* New Legend Items for Places */}
+          <div style={legendRow}>
+            <span style={{ ...swatch("rgba(255, 195, 0, 0.8)"), borderRadius: "50%" }} />
+            <span>Yellow circle: McDonald's</span>
+          </div>
+
+          <div style={legendRow}>
+            <span style={{ ...swatch("rgba(200, 100, 255, 0.8)"), borderRadius: "50%" }} />
+            <span>Purple circle: Mall</span>
+          </div>
+
+          <div style={legendRow}>
+            <span style={{ ...swatch("rgba(0, 100, 255, 0.8)"), borderRadius: "50%" }} />
+            <span>Blue circle: Police Station</span>
           </div>
 
           <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.35 }}>
@@ -639,6 +827,7 @@ export default function Home() {
           </div>
         )}
 
+        {/* --- Reporting UI --- */}
         {selected && (
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)" }}>
@@ -673,8 +862,6 @@ export default function Home() {
                 color: "white",
                 outline: "none",
               }}
-
-              
             />
 
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -706,6 +893,7 @@ export default function Home() {
               />
 
               {proofImage && (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={proofImage}
                   alt="proof"
@@ -745,13 +933,13 @@ export default function Home() {
                       method: "POST",
                       headers: { "content-type": "application/json" },
                       body: JSON.stringify({
-                      h3_index: selected.report_h3,
-                      lat: selected.lat,
-                      lon: selected.lon,
-                      claim,
-                      user_text: text,
-                      signage_image_base64: proofImage,
-                    }),
+                        h3_index: selected.report_h3,
+                        lat: selected.lat,
+                        lon: selected.lon,
+                        claim,
+                        user_text: text,
+                        signage_image_base64: proofImage,
+                      }),
                     });
 
                     const payload = await res.json().catch(() => ({}));
@@ -760,7 +948,6 @@ export default function Home() {
                       throw new Error(payload?.error || `Report failed (${res.status})`);
                     }
 
-                    // Optimistic update so it works on first click visually
                     setReportCells((prev) => {
                       const idx = prev.findIndex((c) => c.h3_index === selected.report_h3);
                       const isNoCam = claim === "camera_absent";
@@ -795,7 +982,6 @@ export default function Home() {
                     setReportText("");
                     setProofImage(null);
 
-                    // Sync with server after
                     scheduleRefresh();
                   } catch (e: any) {
                     console.error(e);
@@ -815,13 +1001,8 @@ export default function Home() {
                     setLastError(null);
 
                     const cell = reportCells.find((c) => c.h3_index === selected.report_h3);
-                    
-                    const reportCount =
-                      (cell?.camera_present_count || 0) + (cell?.camera_absent_count || 0);
-                    // Retrieve actual camera data for this specific H3 hex and its neighbors
-                    const { inCell, nearby } = getCameraCountsForH3(points, selected.report_h3, 1);
-
-
+                    const reportCount = (cell?.camera_present_count || 0) + (cell?.camera_absent_count || 0);
+                    const { inCell, nearby } = getCameraCountsForH3(points, selected.report_h3, reportRes, 1);
 
                     const ttsText = buildTtsSummaryText({
                       reportSummary: cell?.summary ?? null,
@@ -829,8 +1010,6 @@ export default function Home() {
                       camerasInCell: inCell,
                       camerasNearby: nearby,
                     });
-
-                    
 
                     await playTTS(ttsText);
 
@@ -859,8 +1038,10 @@ export default function Home() {
         )}
       </div>
 
-      <DeckGL
-        viewState={viewState}
+      {/* Main Map Layout */}
+      <div style={{ flexGrow: 1, position: "relative" }}>
+        <DeckGL
+          viewState={viewState}
           controller={true}
           layers={layers}
           useDevicePixels={1}
@@ -868,48 +1049,56 @@ export default function Home() {
             setViewState(viewState as any);
           }}
           onInteractionStateChange={(s) => {
-          const active = s.isDragging || s.isPanning || s.isZooming || s.isRotating;
-          if (!active) scheduleRefresh(300); // run shortly after the user stops moving
-        }}
-        onHover={(info: any) => {
-          if (!info?.viewport) return;
+            const active = s.isDragging || s.isPanning || s.isZooming || s.isRotating;
+            if (!active) scheduleRefresh(300);
+          }}
+          onHover={(info: any) => {
+            if (!info?.viewport) return;
 
-          const [lon, lat] = info.viewport.unproject([info.x, info.y]);
+            const [lon, lat] = info.viewport.unproject([info.x, info.y]);
+            const h3Pick = latLngToCell(lat, lon, pickRes);
 
-          const h3Pick = latLngToCell(lat, lon, pickRes);
+            if (hovered?.h3 === h3Pick) return;
 
-          // only update state if the hovered cell actually changed
-          if (hovered?.h3 === h3Pick) return;
+            const [centerLat, centerLon] = cellToLatLng(h3Pick);
+            setHovered({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Pick });
+          }}
+          onClick={(info: any) => {
+            if (!info?.viewport) return;
 
-          const [centerLat, centerLon] = cellToLatLng(h3Pick);
-          setHovered({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Pick });
-        }}
-        onClick={(info: any) => {
-          if (!info?.viewport) return;
+            const [lon, lat] = info.viewport.unproject([info.x, info.y]);
+            const h3Pick = latLngToCell(lat, lon, pickRes);
+            const [centerLat, centerLon] = cellToLatLng(h3Pick);
 
-          const [lon, lat] = info.viewport.unproject([info.x, info.y]);
+            setSelected({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Pick });
+          }}
+        >
+          <Map
+            ref={mapRef}
+            {...viewState}
+            pixelRatio={1}
+            mapStyle={`https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.NEXT_PUBLIC_MAPTILER_KEY}`}
+            onLoad={() => {
+              const map = mapRef.current?.getMap();
+              if (map) {
+                map.on("styleimagemissing", (e: any) => {
+                  try {
+                    const img = new ImageData(1, 1);
+                    map.addImage(e.id, img as any);
+                  } catch {}
+                });
+              }
 
-          const h3Pick = latLngToCell(lat, lon, pickRes);
-          const [centerLat, centerLon] = cellToLatLng(h3Pick);
-
-          setSelected({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Pick });
-        }}
-      >
-        <Map
-          ref={mapRef}
-          {...viewState}
-          pixelRatio={1}
-          mapStyle={`https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.NEXT_PUBLIC_MAPTILER_KEY}`}
-          onLoad={() => {
-              // wait a bit so the map initializes smoothly
               setTimeout(() => {
                 flyToUser();
               }, 600);
             }}
-        >
-          <NavigationControl position="bottom-right" />
-        </Map>
-      </DeckGL>
+          >
+            <NavigationControl position="bottom-right" />
+          </Map>
+        </DeckGL>
+      </div>
+
     </div>
   );
 }
