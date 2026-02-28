@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 
 // keep it short to reduce credits needed
 const schema = z.object({
-  text: z.string().min(1).max(120),
+  text: z.string().min(1).max(260),
 });
 
 export async function POST(req: Request) {
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
   const parsed = schema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Bad input: expected { text: string }" }, { status: 400 });
 
-  const text = parsed.data.text.slice(0, 120);
+  const text = parsed.data.text.slice(0, 260);
 
   const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
     method: "POST",

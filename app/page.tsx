@@ -6,7 +6,7 @@ import maplibregl from "maplibre-gl";
 import DeckGL from "@deck.gl/react";
 import { HexagonLayer } from "@deck.gl/aggregation-layers";
 import { GeoJsonLayer } from "@deck.gl/layers";
-import { latLngToCell, cellToBoundary } from "h3-js";
+import { latLngToCell, cellToBoundary, gridDisk } from "h3-js";
 import { FlyToInterpolator } from "@deck.gl/core";
 
 type Pt = { lat: number; lon: number };
@@ -20,13 +20,45 @@ function bboxFromMap(map: maplibregl.Map) {
   return [south, west, north, east].map((x) => Number(x.toFixed(6))).join(",");
 }
 
+function getCameraCountsForH3(points: Pt[], h3Index: string, k = 1) {
+  // Cameras exactly inside the clicked hex
+  const inCell = points.filter((p) => latLngToCell(p.lat, p.lon, H3_RES) === h3Index).length;
+
+  // Cameras in nearby hexes (k=1 means neighbors)
+  const nearbySet = new Set(gridDisk(h3Index, k));
+  const nearby = points.filter((p) => nearbySet.has(latLngToCell(p.lat, p.lon, H3_RES))).length;
+
+  return { inCell, nearby };
+}
+
+// Helper to draw a single H3 hex
+function h3CellToFeature(h3Index: string, props: Record<string, any> = {}) {
+  const boundary: any[] = cellToBoundary(h3Index, true); // already [lng, lat]
+
+  const coords = boundary.map((pt: any) => {
+    // supports both tuple output and object output, just in case
+    if (Array.isArray(pt)) return [Number(pt[0]), Number(pt[1])]; // [lng, lat]
+    if (pt && typeof pt === "object") return [Number(pt.lng), Number(pt.lat)];
+    return pt;
+  });
+
+  coords.push(coords[0]); // close polygon
+
+  return {
+    type: "Feature",
+    properties: props,
+    geometry: { type: "Polygon", coordinates: [coords] },
+  };
+}
+
+
 async function fileToCompressedDataUrl(
   file: File,
   opts: { maxDim?: number; quality?: number; maxLen?: number } = {}
 ) {
-  const maxDim = opts.maxDim ?? 1100;        // reduce if still too big
-  let quality = opts.quality ?? 0.72;        // reduce if still too big
-  const maxLen = opts.maxLen ?? 1_800_000;   // about 1.8M chars in the data URL
+  const maxDim = opts.maxDim ?? 1100;
+  let quality = opts.quality ?? 0.72;
+  const maxLen = opts.maxLen ?? 1_800_000;
 
   const fileToImage = (f: File) =>
     new Promise<HTMLImageElement>((resolve, reject) => {
@@ -54,7 +86,6 @@ async function fileToCompressedDataUrl(
   if (!ctx) throw new Error("Canvas not supported");
   ctx.drawImage(img, 0, 0, w, h);
 
-  // Try a couple times if still too large
   let out = canvas.toDataURL("image/jpeg", quality);
   while (out.length > maxLen && quality > 0.45) {
     quality -= 0.08;
@@ -64,27 +95,61 @@ async function fileToCompressedDataUrl(
   return out;
 }
 
-// Helper to build natural sounding TTS sentences
-function buildTtsText(opts: { reportCount: number; signageCount: number; aiSummary?: string | null; signageText?: string | null }) {
-  const { reportCount, signageCount, aiSummary, signageText } = opts;
+function buildDetailedTtsText(opts: {
+  reportCount: number;
+  signageCount: number;
+  camerasInCell: number;
+  camerasNearby: number;
+  mode: "privacy" | "safety";
+  signageText?: string | null;
+}) {
+  const { reportCount, signageCount, camerasInCell, camerasNearby, mode, signageText } = opts;
 
-  if (reportCount >= 5) {
-    return `Community confirmed. ${reportCount} reports in this area.`.slice(0, 120);
-  }
+  const camLine =
+    camerasInCell > 0
+      ? `Looks like the map has ${camerasInCell} camera marker${camerasInCell === 1 ? "" : "s"} right here.`
+      : camerasNearby > 0
+        ? `The map shows cameras close by, but not directly in this spot.`
+        : `The map doesn’t show any cameras here, but it can miss things.`;
 
-  if (aiSummary && aiSummary.trim()) return aiSummary.trim().slice(0, 120);
+  const reportLine =
+    reportCount === 0
+      ? `No one has dropped a report here yet.`
+      : reportCount === 1
+        ? `There’s 1 community report for this area.`
+        : `There are ${reportCount} community reports for this area.`;
 
-  if (signageText && signageText.trim()) {
-    return `Sign text says: ${signageText.trim()}`.slice(0, 120);
-  }
+  const confidenceLine =
+    reportCount >= 5
+      ? `At this point it’s basically community confirmed.`
+      : reportCount >= 2
+        ? `A couple people said the same thing, so it’s probably legit.`
+        : reportCount === 1
+          ? `It’s just one report though, so take it lightly.`
+          : `If you’re seeing something, you can be the first to report it.`;
 
-  if (reportCount === 0) return "No reports in this area yet.".slice(0, 120);
+  const signLine =
+    signageCount === 0
+      ? `No one mentioned signs.`
+      : signageCount === 1
+        ? `Someone mentioned a sign about recording.`
+        : `A few reports mentioned signage.`;
 
-  const reportPart = reportCount === 1 ? "1 report" : `${reportCount} reports`;
-  const signPart =
-    signageCount === 0 ? "No signage mentioned." : signageCount === 1 ? "1 sign mentioned." : `${signageCount} signs mentioned.`;
+  const signTextLine =
+    signageText && signageText.trim()
+      ? `The sign says: ${signageText.trim().slice(0, 90)}.`
+      : "";
 
-  return `This area has ${reportPart}. ${signPart}`.slice(0, 120);
+  const modeLine =
+    mode === "privacy"
+      ? `You’re in privacy mode, so lower monitoring is the goal.`
+      : `You’re in safety mode, so more monitoring might feel “safer”.`;
+
+  const full = `${camLine} ${reportLine} ${confidenceLine} ${signLine} ${signTextLine} ${modeLine}`
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return full.slice(0, 260);
 }
 
 const H3_RES = 9;
@@ -92,8 +157,8 @@ const H3_RES = 9;
 export default function Home() {
   const mapRef = useRef<MapRef | null>(null);
   const refreshTimer = useRef<number | null>(null);
+  const refreshSeq = useRef(0);
 
-  // Added viewState for controlled Map/DeckGL synchronization
   const [viewState, setViewState] = useState({
     longitude: -75.75,
     latitude: 39.68,
@@ -105,12 +170,17 @@ export default function Home() {
   const [mode, setMode] = useState<"privacy" | "safety">("privacy");
   const [points, setPoints] = useState<Pt[]>([]);
   const [loading, setLoading] = useState(false);
+  const [submittingReport, setSubmittingReport] = useState(false);
+
+  // New location states
+  const [hasUserLocated, setHasUserLocated] = useState(false);
+  const [lastBbox, setLastBbox] = useState<[number, number, number, number] | null>(null);
 
   const [reportText, setReportText] = useState("");
   const [proofImage, setProofImage] = useState<string | null>(null);
   const [selected, setSelected] = useState<{ lat: number; lon: number; h3: string } | null>(null);
-  const [lastBbox, setLastBbox] = useState<[number, number, number, number] | null>(null);
 
+  const [hovered, setHovered] = useState<{ lat: number; lon: number; h3: string } | null>(null);
   const [reportCells, setReportCells] = useState<
     Array<{ 
       h3_index: string; 
@@ -173,22 +243,62 @@ export default function Home() {
     flex: "0 0 auto",
   });
 
-  function reportCellsToGeoJSON() {
-    return {
-      type: "FeatureCollection",
-      features: reportCells.map((c) => {
-        const boundary = cellToBoundary(c.h3_index, true);
-        const coords = boundary.map(([lat, lon]) => [lon, lat]);
-        coords.push(coords[0]);
+  function pickBestVoice() {
+  const voices = window.speechSynthesis.getVoices();
 
-        return {
-          type: "Feature",
-          properties: c,
-          geometry: { type: "Polygon", coordinates: [coords] },
-        };
-      }),
-    };
+  // Prefer higher quality English voices on macOS / Chrome
+  const preferred = [
+    "Samantha",
+    "Karen",
+    "Daniel",
+    "Google US English",
+    "Google UK English Female",
+    "Google UK English Male",
+  ];
+
+  for (const name of preferred) {
+    const v = voices.find((x) => x.name === name);
+    if (v) return v;
   }
+
+  // Otherwise pick any en-US/en-GB voice
+  return voices.find((v) => v.lang?.startsWith("en-US")) ||
+         voices.find((v) => v.lang?.startsWith("en-GB")) ||
+         voices[0] ||
+         null;
+}
+
+async function speakBrowser(text: string) {
+  // Some browsers load voices async
+  const ensureVoices = () =>
+    new Promise<void>((resolve) => {
+      const v = window.speechSynthesis.getVoices();
+      if (v && v.length) return resolve();
+      window.speechSynthesis.onvoiceschanged = () => resolve();
+      setTimeout(() => resolve(), 300);
+    });
+
+  await ensureVoices();
+
+  window.speechSynthesis.cancel(); // stop any previous speech
+
+  const u = new SpeechSynthesisUtterance(text);
+  const voice = pickBestVoice();
+  if (voice) u.voice = voice;
+
+  u.rate = 1.04;   // smooth
+  u.pitch = 1.02;  // less robotic
+  u.volume = 1.0;
+
+  window.speechSynthesis.speak(u);
+}
+
+  function reportCellsToGeoJSON() {
+  return {
+    type: "FeatureCollection",
+    features: reportCells.map((c) => h3CellToFeature(c.h3_index, c as any)),
+  };
+}
 
   async function playTTS(text: string) {
     const res = await fetch("/api/tts", {
@@ -206,8 +316,7 @@ export default function Home() {
 
     const err = await res.json().catch(() => ({}));
     if (res.status === 429 && err?.code === "quota_exceeded") {
-      const u = new SpeechSynthesisUtterance(text);
-      window.speechSynthesis.speak(u);
+      await speakBrowser(text);
       return;
     }
 
@@ -218,26 +327,35 @@ export default function Home() {
     if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
     refreshTimer.current = window.setTimeout(() => {
       refresh();
-    }, 250);
+    }, 700);
   }
 
   function flyToUser() {
     if (!navigator.geolocation) return;
-  
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
-  
+
+        setHasUserLocated(true);
+
         setViewState((v) => ({
           ...v,
           latitude,
           longitude,
-          zoom: 18, // bigger zoom
+          zoom: 18,
           transitionDuration: 1400,
           transitionInterpolator: new FlyToInterpolator(),
         }));
+
+        window.setTimeout(() => {
+          scheduleRefresh();
+        }, 1200);
       },
       (err) => {
+        // If user denies location, keep overlay off
+        setHasUserLocated(false);
+        setLastBbox(null);
         console.log("geolocation error:", err?.message);
       },
       { enableHighAccuracy: true, timeout: 8000 }
@@ -247,47 +365,63 @@ export default function Home() {
   async function refresh() {
     const map = mapRef.current?.getMap();
     if (!map) return;
-
+  
+    const mySeq = ++refreshSeq.current; // only the latest refresh can update state
+  
     setLoading(true);
     setLastError(null);
-
-    const b = map.getBounds();
-    setLastBbox([b.getSouth(), b.getWest(), b.getNorth(), b.getEast()]);
-    
+  
     const bbox = bboxFromMap(map);
-
+  
+    // track bbox for the red overlay
+    const b = map.getBounds();
+    if (hasUserLocated) {
+      setLastBbox([b.getSouth(), b.getWest(), b.getNorth(), b.getEast()]);
+    } else {
+      setLastBbox(null);
+    }
+  
     try {
       const [camsRes, repRes] = await Promise.all([
         fetch(`/api/cameras?bbox=${encodeURIComponent(bbox)}`),
         fetch(`/api/report?bbox=${encodeURIComponent(bbox)}`),
       ]);
-
+  
+      // if a newer refresh started, ignore this result
+      if (mySeq !== refreshSeq.current) return;
+  
       if (!camsRes.ok) {
         const t = await camsRes.text().catch(() => "");
         throw new Error(`cameras failed (${camsRes.status}): ${t.slice(0, 200)}`);
       }
       const camsJson = await camsRes.json();
+  
+      if (mySeq !== refreshSeq.current) return;
       setPoints(camsJson.points || []);
-
+  
       if (!repRes.ok) {
         const t = await repRes.text().catch(() => "");
         throw new Error(`reports failed (${repRes.status}): ${t.slice(0, 200)}`);
       }
       const repJson = await repRes.json();
+  
+      if (mySeq !== refreshSeq.current) return;
       setReportCells(repJson.cells || []);
     } catch (e: any) {
+      if (mySeq !== refreshSeq.current) return;
       console.error(e);
       setLastError(String(e?.message || e));
     } finally {
-      setLoading(false);
+      if (mySeq === refreshSeq.current) setLoading(false);
     }
   }
 
   const layers = useMemo(() => {
     const reportGeo = reportCellsToGeoJSON();
 
+    // Red tint now requires both hasUserLocated and lastBbox
     const bboxGeo =
-      lastBbox
+      hasUserLocated && lastBbox
         ? {
             type: "FeatureCollection",
             features: [
@@ -311,27 +445,20 @@ export default function Home() {
           }
         : { type: "FeatureCollection", features: [] };
 
-    const selectedGeo = selected
-      ? {
-          type: "Feature",
-          properties: {},
-          geometry: {
-            type: "Polygon",
-            coordinates: [
-              (() => {
-                const boundary = cellToBoundary(selected.h3, true);
-                const coords = boundary.map(([lat, lon]) => [lon, lat]);
-                coords.push(coords[0]);
-                return coords;
-              })(),
-            ],
-          },
-        }
-      : null;
+    // Create GeoJSON for the currently selected hex
+    const selectedGeo = {
+      type: "FeatureCollection",
+      features: selected ? [h3CellToFeature(selected.h3)] : [],
+    };
+
+    const hoveredGeo = {
+      type: "FeatureCollection",
+      features: hovered ? [h3CellToFeature(hovered.h3)] : [],
+    };
 
     const mapLayers = [];
 
-    // 1. Red Base Layer
+    // 1. Red Base Layer (Only shows up when user is located)
     mapLayers.push(
       new GeoJsonLayer({
         id: "no-camera-red-base",
@@ -358,17 +485,30 @@ export default function Home() {
             pickable: true,
             opacity: 0.35,
             colorRange: [
-              [0, 60, 0],
-              [0, 100, 0],
-              [0, 140, 0],
-              [0, 180, 0],
-              [0, 220, 0],
-              [0, 255, 0],
+              [0, 160, 0],
+              [0, 160, 0],
+              [0, 160, 0],
+              [0, 160, 0],
+              [0, 160, 0],
+              [0, 160, 0],
             ],
           })
         );
       }
     }
+
+    mapLayers.push(
+      new GeoJsonLayer({
+        id: "hovered-hex",
+        data: hoveredGeo as any,
+        pickable: false,
+        stroked: true,
+        filled: false,
+        lineWidthMinPixels: 3,
+        getLineColor: [0, 255, 255, 220],
+        parameters: { depthTest: false },
+      })
+    );
 
     // 3. Community Reports Layer
     mapLayers.push(
@@ -390,22 +530,23 @@ export default function Home() {
       })
     );
 
-    // 4. Selected Cell Outline Layer
+    // 4. Selected Hex Layer (Bright cyan outline to sit on top)
     mapLayers.push(
       new GeoJsonLayer({
-        id: "selected-cell-outline",
-        data: selectedGeo ? { type: "FeatureCollection", features: [selectedGeo] } : { type: "FeatureCollection", features: [] },
+        id: "selected-hex",
+        data: selectedGeo as any,
         pickable: false,
         stroked: true,
         filled: true,
-        getLineColor: [255, 255, 255, 220],
-        getFillColor: [255, 255, 255, 30],
-        lineWidthMinPixels: 3,
+        lineWidthMinPixels: 5,
+        getFillColor: [0, 200, 255, 90],
+        getLineColor: [0, 200, 255, 255],
+        parameters: { depthTest: false }, // this is the key
       })
     );
 
     return mapLayers;
-  }, [points, reportCells, selected, lastBbox]);
+  }, [points, reportCells, selected, lastBbox, hasUserLocated]);
 
   return (
     <div style={{ height: "100vh" }}>
@@ -422,7 +563,6 @@ export default function Home() {
           <button style={btn(false)} onClick={refresh}>
             {loading ? "Loading..." : "Refresh"}
           </button>
-          {/* New manual locate button */}
           <button style={btn(false)} onClick={flyToUser}>
             Locate me
           </button>
@@ -464,8 +604,8 @@ export default function Home() {
           </div>
 
           <div style={legendRow}>
-            <span style={swatch("rgba(255, 255, 255, 0.20)")} />
-            <span>White outline: currently selected cell.</span>
+            <span style={swatch("rgba(0, 200, 255, 0.35)")} />
+            <span>Cyan outline: currently selected cell.</span>
           </div>
 
           <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.35 }}>
@@ -485,7 +625,7 @@ export default function Home() {
               <b>Selected cell:</b> {selected.h3}
             </div>
             
-            {reportCells.find((c) => c.h3_index === selected.h3)?.report_count! >= 5 && (
+            {(reportCells.find((c) => c.h3_index === selected.h3)?.report_count || 0) >= 5 && (
               <div style={{ fontSize: 13, color: "#a855f7", fontWeight: "bold", marginTop: 4 }}>
                 ✓ Community confirmed
               </div>
@@ -533,11 +673,21 @@ export default function Home() {
             <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
               <button
                 style={btn(false)}
+                disabled={submittingReport}
                 onClick={async () => {
+                  if (submittingReport) return;
+
                   try {
+                    setSubmittingReport(true);
                     setLastError(null);
 
-                    if (!reportText.trim()) {
+                    if (!selected) {
+                      setLastError("Select a cell first.");
+                      return;
+                    }
+
+                    const text = reportText.trim();
+                    if (!text) {
                       setLastError("Write a short note before submitting.");
                       return;
                     }
@@ -555,26 +705,60 @@ export default function Home() {
                         lat: selected.lat,
                         lon: selected.lon,
                         mode,
-                        user_text: reportText.trim(),
+                        user_text: text,
                         signage_image_base64: proofImage,
                       }),
                     });
 
+                    const payload = await res.json().catch(() => ({}));
+
                     if (!res.ok) {
-                      const j = await res.json().catch(() => ({}));
-                      throw new Error(j.error || `Report failed (${res.status})`);
+                      throw new Error(payload?.error || `Report failed (${res.status})`);
                     }
+
+                    // Optimistic update so it works on first click visually
+                    setReportCells((prev) => {
+                      const idx = prev.findIndex((c) => c.h3_index === selected.h3);
+                      const signageInc = payload?.signage_text ? 1 : 0;
+
+                      if (idx >= 0) {
+                        const next = [...prev];
+                        next[idx] = {
+                          ...next[idx],
+                          report_count: (next[idx].report_count || 0) + 1,
+                          signage_count: (next[idx].signage_count || 0) + signageInc,
+                          summary: payload?.summary ?? next[idx].summary,
+                          signage_text: payload?.signage_text ?? next[idx].signage_text,
+                        };
+                        return next;
+                      }
+
+                      return [
+                        ...prev,
+                        {
+                          h3_index: selected.h3,
+                          report_count: 1,
+                          signage_count: signageInc,
+                          summary: payload?.summary,
+                          signage_text: payload?.signage_text,
+                        },
+                      ];
+                    });
 
                     setReportText("");
                     setProofImage(null);
-                    await refresh();
+
+                    // Sync with server after
+                    scheduleRefresh();
                   } catch (e: any) {
                     console.error(e);
                     setLastError(String(e?.message || e));
+                  } finally {
+                    setSubmittingReport(false);
                   }
                 }}
               >
-                Submit report
+                {submittingReport ? "Submitting..." : "Submit report"}
               </button>
 
               <button
@@ -584,12 +768,17 @@ export default function Home() {
                     setLastError(null);
 
                     const cell = reportCells.find((c) => c.h3_index === selected.h3);
+                    
+                    // NEW: Retrieve actual camera data for this specific H3 hex and its neighbors
+                    const { inCell, nearby } = getCameraCountsForH3(points, selected.h3, 1);
 
-                    const ttsText = buildTtsText({
+                    const ttsText = buildDetailedTtsText({
                       reportCount: cell?.report_count || 0,
                       signageCount: cell?.signage_count || 0,
-                      aiSummary: cell?.summary ?? null,       
-                      signageText: cell?.signage_text ?? null 
+                      camerasInCell: inCell,
+                      camerasNearby: nearby,
+                      mode,
+                      signageText: cell?.signage_text ?? null,
                     });
 
                     await playTTS(ttsText);
@@ -624,19 +813,26 @@ export default function Home() {
         controller={true}
         layers={layers}
         onViewStateChange={({ viewState }) => setViewState(viewState as any)}
-        onClick={(info: any) => {
-          if (!info?.coordinate) return;
-          const [lon, lat] = info.coordinate as [number, number];
-          const h3 = latLngToCell(lat, lon, H3_RES);
-          setSelected({ lat, lon, h3 });
-        }}
+        onHover={(info: any) => {
+        const coord = info?.coordinate;
+        if (!coord) return;
+        const [lon, lat] = coord as [number, number];
+        const h3 = latLngToCell(lat, lon, H3_RES);
+        setHovered({ lat, lon, h3 });
+      }}
+      onClick={(info: any) => {
+        const coord = info?.coordinate;
+        if (!coord) return;
+        const [lon, lat] = coord as [number, number];
+        const h3 = latLngToCell(lat, lon, H3_RES);
+        setSelected({ lat, lon, h3 });
+      }}
       >
         <Map
           ref={mapRef}
           {...viewState}
           mapStyle={`https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.NEXT_PUBLIC_MAPTILER_KEY}`}
           onLoad={() => {
-            refresh();
             flyToUser(); 
           }}
           onMoveEnd={scheduleRefresh}
