@@ -44,7 +44,7 @@ type RecommendRequest = {
   lat: number;
   lon: number;
   maxResults?: number;
-  excludeKinds?: string[]; // <-- ADD THIS
+  excludeKinds?: string[];
 };
 
 type RecommendItem = {
@@ -112,7 +112,6 @@ function classifyIntent(text: string): Intent {
 }
 
 function intentConfig(intent: Intent) {
-  // weights are intentionally simple for hackathon
   if (intent === "facebook_marketplace_sale") {
     return {
       radiusM: 6500,
@@ -201,16 +200,29 @@ function safeNum(x: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// ✅ Updated: Community hotspots are no longer deduped away
 function dedupeByDistance(items: RecommendItem[], minMeters: number) {
   const out: RecommendItem[] = [];
   for (const it of items) {
-    const ok = out.every((o) => haversineMeters(o.place.lat, o.place.lon, it.place.lat, it.place.lon) >= minMeters);
+    const isHotspot = it.place.kind === "community_hotspot";
+    
+    const ok = out.every((o) => {
+      const d = haversineMeters(o.place.lat, o.place.lon, it.place.lat, it.place.lon);
+      if (d >= minMeters) return true;
+
+      // ✅ Allow hotspots to coexist even if close to another item
+      if (isHotspot || o.place.kind === "community_hotspot") return true;
+
+      return false;
+    });
+
     if (ok) out.push(it);
   }
   return out;
 }
 
 export async function POST(req: Request) {
+  const CAM_RES = 10; // Shared resolution constant
   const baseUrl = baseUrlFromReq(req);
 
   let body: RecommendRequest | null = null;
@@ -225,7 +237,9 @@ export async function POST(req: Request) {
   const text = String(body?.text || "").slice(0, 800);
   const lat = Number(body?.lat);
   const lon = Number(body?.lon);
-  const maxResults = Math.max(1, Math.min(10, Number(body?.maxResults || 5)));
+  
+  // ✅ Patched: maxResults limit increased to 30
+  const maxResults = Math.max(1, Math.min(30, Number(body?.maxResults || 5)));
 
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
     return NextResponse.json({ error: "bad_lat_lon" }, { status: 400 });
@@ -248,9 +262,9 @@ export async function POST(req: Request) {
   const bboxParam = bboxToParam(bbox);
 
   const allowedKinds = (cfg.kindsQuery as readonly string[])
-  .filter((k) => !exclude.has(k as PlaceKind));
+    .filter((k) => !exclude.has(k as PlaceKind));
 
-    const kindsParam = allowedKinds.join(",");
+  const kindsParam = allowedKinds.join(",");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
@@ -259,7 +273,8 @@ export async function POST(req: Request) {
     const [placesRes, camsRes, repRes] = await Promise.all([
       fetch(`${baseUrl}/api/places?bbox=${encodeURIComponent(bboxParam)}&kinds=${encodeURIComponent(kindsParam)}`, { signal: controller.signal }),
       fetch(`${baseUrl}/api/cameras?bbox=${encodeURIComponent(bboxParam)}`, { signal: controller.signal }),
-      fetch(`${baseUrl}/api/report?bbox=${encodeURIComponent(bboxParam)}&res=10`, { signal: controller.signal }),
+      // ✅ Patched: Added res=CAM_RES to matching logic
+      fetch(`${baseUrl}/api/report?bbox=${encodeURIComponent(bboxParam)}&res=${CAM_RES}`, { signal: controller.signal }),
     ]);
 
     const placesJson = await placesRes.json().catch(() => ({}));
@@ -270,9 +285,6 @@ export async function POST(req: Request) {
     const cameras: CameraPt[] = Array.isArray(camsJson?.points) ? camsJson.points : [];
     const reportCells: ReportCell[] = Array.isArray(repJson?.cells) ? repJson.cells : [];
 
-    const CAM_RES = 10;
-
-    // camera counts by H3
     const camCounts = new Map<string, number>();
     for (const p of cameras) {
       const plat = Number(p?.lat);
@@ -282,23 +294,16 @@ export async function POST(req: Request) {
       camCounts.set(h3, (camCounts.get(h3) || 0) + 1);
     }
 
-    // report map
     const repMap = new Map<string, ReportCell>();
     for (const c of reportCells) {
       if (!c?.h3_index) continue;
       repMap.set(c.h3_index, c);
     }
 
-    // Build community hotspot candidates: cells with yes votes
     const hotspots: Place[] = [];
     for (const c of reportCells) {
       const yes = safeNum(c?.camera_present_count);
       const no = safeNum(c?.camera_absent_count);
-      const conflict = yes > 0 && no > 0;
-
-      // Only consider "nice to recommend": yes wins and has some confidence
-      if (conflict) continue;
-      if (yes < 2) continue; // you can bump this to 5 if you want only "confirmed"
 
       const [centerLat, centerLon] = cellToLatLng(c.h3_index);
       const d = haversineMeters(lat, lon, centerLat, centerLon);
@@ -316,8 +321,7 @@ export async function POST(req: Request) {
     const scored: RecommendItem[] = [];
 
     function scorePlace(pl: Place) {
-
-        if (exclude.has(pl.kind)) return;
+      if (exclude.has(pl.kind)) return;
 
       const d = haversineMeters(lat, lon, pl.lat, pl.lon);
       if (d > cfg.maxDistanceM * 1.05) return;
@@ -334,30 +338,24 @@ export async function POST(req: Request) {
       const no = safeNum(cell?.camera_absent_count);
       const conflict = yes > 0 && no > 0;
 
-      // Scores
       const distScore = clamp01(1 - d / cfg.maxDistanceM);
       const camScore = clamp01(Math.log1p(camsK1) / Math.log(1 + 18));
 
-      // Community vote boost: emphasize "camera_present" votes
       let repScore = 0;
       if (yes >= 5) repScore += 1.0;
       else if (yes >= 2) repScore += 0.6;
       else if (yes >= 1) repScore += 0.25;
 
-      // If community says "no cameras", reduce safety score
       if (no >= 5) repScore -= 0.8;
       else if (no >= 2) repScore -= 0.35;
       else if (no >= 1) repScore -= 0.15;
 
       const conflictPenalty = conflict ? 0.55 : 0;
-
       const typeW = cfg.kindWeight[pl.kind] ?? 0.5;
-
-      // Hotspots lean more on community confidence
       const isHotspot = pl.kind === "community_hotspot";
 
       const evidenceBoost =
-        (camsK1 >= 1 ? 0.35 : 0) +    // OSM camera markers nearby
+        (camsK1 >= 1 ? 0.35 : 0) +
         (yes >= 1 ? 0.35 : 0);   
 
       const score =
@@ -399,46 +397,71 @@ export async function POST(req: Request) {
       });
     }
 
-    // Score POIs
     for (const pl of places) {
       if (!pl || !Number.isFinite(pl.lat) || !Number.isFinite(pl.lon)) continue;
       scorePlace(pl);
     }
 
-    // Score hotspots
     for (const h of hotspots) scorePlace(h);
 
     scored.sort((a, b) => b.score - a.score);
 
-// Dedupe so you do not get 5 things on the same block
-const deduped = dedupeByDistance(scored, 250);
+    const deduped = dedupeByDistance(scored, 250);
 
-// Evidence means: camera markers nearby OR community "yes" OR hotspot
-const hasEvidence = (x: RecommendItem) =>
-  x.cameras_in_k1 > 0 || x.report_yes > 0 || x.place.kind === "community_hotspot";
+    const FE_KINDS: PlaceKind[] = [
+  "community_hotspot",
+  "community_centre",
+  "park",
+  "cafe",
+  "library",
+  "mall",
+  "mcd",
+  "police",
+];
 
-// Split into two buckets so evidence always ranks first
-const primary = deduped.filter(hasEvidence);
-const secondary = deduped.filter((x) => !hasEvidence(x));
+const enabledFromFE = FE_KINDS.filter((k) => !exclude.has(k));
+const communityOnly = enabledFromFE.length === 1 && enabledFromFE[0] === "community_hotspot";
 
-// Keep your old safety cutoff only for the primary bucket
-const primaryGood = primary.filter((x) => x.score >= 1.6);
+if (communityOnly) {
+  const onlyHotspots = deduped.filter((x) => x.place.kind === "community_hotspot");
+  const payload = {
+    intent,
+    intentLabel: cfg.label,
+    bbox: bboxParam,
+    results: onlyHotspots.slice(0, maxResults),
+    meta: {
+      placesFetched: places.length,
+      camerasFetched: cameras.length,
+      reportCellsFetched: reportCells.length,
+      hotspotCandidates: hotspots.length,
+    },
+    note: "Community-only mode: showing only community hotspot candidates.",
+  };
 
-// Take from primary first
-const top: RecommendItem[] = primaryGood.slice(0, maxResults);
-
-// If not enough, fill with the best remaining items even if no cameras
-if (top.length < maxResults) {
-  const used = new Set(top.map((x) => x.place.id));
-  const fillFrom = [...primary, ...secondary]; // still keeps evidence-first ordering
-
-  for (const it of fillFrom) {
-    if (top.length >= maxResults) break;
-    if (used.has(it.place.id)) continue;
-    top.push(it);
-    used.add(it.place.id);
-  }
+  memCache.set(cacheKey, { at: now, data: payload });
+  return NextResponse.json(payload, { status: 200 });
 }
+
+    const hasEvidence = (x: RecommendItem) =>
+      x.cameras_in_k1 > 0 || x.report_yes > 0 || x.place.kind === "community_hotspot";
+
+    const primary = deduped.filter(hasEvidence);
+    const secondary = deduped.filter((x) => !hasEvidence(x));
+
+    const primaryGood = primary.filter((x) => x.score >= 0);
+    const top: RecommendItem[] = primaryGood.slice(0, maxResults);
+
+    if (top.length < maxResults) {
+      const used = new Set(top.map((x) => x.place.id));
+      const fillFrom = [...primary, ...secondary];
+
+      for (const it of fillFrom) {
+        if (top.length >= maxResults) break;
+        if (used.has(it.place.id)) continue;
+        top.push(it);
+        used.add(it.place.id);
+      }
+    }
 
     const payload = {
       intent,
@@ -453,7 +476,6 @@ if (top.length < maxResults) {
       },
       note: "Recommendations prioritize community-confirmed camera presence and public meetup-friendly places.",
     };
-    
 
     memCache.set(cacheKey, { at: now, data: payload });
 

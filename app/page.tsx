@@ -272,9 +272,6 @@ export default function Home() {
   async function loadPlacesSequentially(opts: { bbox: string; enabledKinds: PlaceKind[]; signal: AbortSignal; seq: number }) {
     const { bbox, enabledKinds, signal, seq } = opts;
 
-    // clear places so you can watch them appear one by one
-    setPlaces([]);
-
     for (const kind of enabledKinds) {
       // if a newer refresh started, stop
       if (seq !== refreshSeq.current) return;
@@ -474,7 +471,7 @@ export default function Home() {
           seq: mySeq,
         });
       } else {
-        setPlaces([]);
+        // setPlaces([]);
       }
     } catch (e: any) {
       if (e?.name === "AbortError") return;
@@ -876,22 +873,6 @@ export default function Home() {
           <div style={legendRow}>
             <span style={swatch("rgba(0, 255, 200, 0.75)")} />
             <span>Teal rings: AI recommended spots.</span>
-          </div>
-
-          {/* New Legend Items for Places */}
-          <div style={legendRow}>
-            <span style={{ ...swatch("rgba(255, 195, 0, 0.8)"), borderRadius: "50%" }} />
-            <span>Yellow circle: McDonald's</span>
-          </div>
-
-          <div style={legendRow}>
-            <span style={{ ...swatch("rgba(200, 100, 255, 0.8)"), borderRadius: "50%" }} />
-            <span>Purple circle: Mall</span>
-          </div>
-
-          <div style={legendRow}>
-            <span style={{ ...swatch("rgba(0, 100, 255, 0.8)"), borderRadius: "50%" }} />
-            <span>Blue circle: Police Station</span>
           </div>
 
           <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.35 }}>
