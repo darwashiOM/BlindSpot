@@ -28,6 +28,17 @@ type Place = {
   lon: number;
 };
 
+const PLACE_KINDS: PlaceKind[] = [
+  "community_hotspot",
+  "community_centre",
+  "park",
+  "cafe",
+  "library",
+  "mall",
+  "mcd",
+  "police",
+];
+
 type RecommendItem = {
   place: Place;
   score: number;
@@ -61,7 +72,6 @@ function getCameraCountsForH3(points: Pt[], h3Index: string, res: number, k = 1)
   return { inCell, nearby };
 }
 
-
 function kindLabel(k: PlaceKind) {
   if (k === "community_hotspot") return "Community confirmed area";
   if (k === "police") return "Police station";
@@ -72,7 +82,6 @@ function kindLabel(k: PlaceKind) {
   if (k === "community_centre") return "Community center";
   return "McDonald’s";
 }
-
 
 // Helper to draw a single H3 hex
 function h3CellToFeature(h3Index: string, props: Record<string, any> = {}) {
@@ -142,6 +151,24 @@ export default function Home() {
   const recAbortRef = useRef<AbortController | null>(null);
   const recSeq = useRef(0);
 
+  const didAutoStartRef = useRef(false);
+
+  // default: hide police (you can change defaults)
+  const [kindEnabled, setKindEnabled] = useState<Record<PlaceKind, boolean>>(() => ({
+    police: false,
+    mall: true,
+    mcd: true,
+    park: true,
+    cafe: true,
+    library: true,
+    community_centre: true,
+    community_hotspot: true,
+  }));
+
+  const enabledKinds = useMemo(() => PLACE_KINDS.filter((k) => kindEnabled[k]), [kindEnabled]);
+
+  const disabledKinds = useMemo(() => PLACE_KINDS.filter((k) => !kindEnabled[k]), [kindEnabled]);
+
   const [viewState, setViewState] = useState({
     longitude: -75.75,
     latitude: 39.68,
@@ -150,10 +177,7 @@ export default function Home() {
     pitch: 0,
   });
 
-  const reportRes =
-    viewState.zoom >= 15 ? 12 :
-    viewState.zoom >= 12 ? 10 :
-    8;
+  const reportRes = viewState.zoom >= 15 ? 12 : viewState.zoom >= 12 ? 10 : 8;
 
   const pickRes = reportRes;
   const mode = "safety";
@@ -166,11 +190,11 @@ export default function Home() {
 
   const [reportText, setReportText] = useState("");
   const [proofImage, setProofImage] = useState<string | null>(null);
-  const [selected, setSelected] = useState<{ lat: number; lon: number; h3: string; report_h3: string; } | null>(null);
+  const [selected, setSelected] = useState<{ lat: number; lon: number; h3: string; report_h3: string } | null>(null);
 
   const [claim, setClaim] = useState<"camera_present" | "camera_absent">("camera_present");
   const abortRef = useRef<AbortController | null>(null);
-  const [hovered, setHovered] = useState<{ lat: number; lon: number; h3: string; report_h3: string; } | null>(null);
+  const [hovered, setHovered] = useState<{ lat: number; lon: number; h3: string; report_h3: string } | null>(null);
   const [reportCells, setReportCells] = useState<
     Array<{
       h3_index: string;
@@ -189,6 +213,13 @@ export default function Home() {
   const [recommending, setRecommending] = useState(false);
   const [recIntentLabel, setRecIntentLabel] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<RecommendItem[]>([]);
+
+  // Trigger a refresh when filters change (so newly enabled kinds actually load)
+  React.useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    scheduleRefresh(0);
+  }, [kindEnabled]);
 
   // UPDATED: Changed from absolute positioning to a flex sidebar layout
   const panelStyle: React.CSSProperties = {
@@ -238,34 +269,53 @@ export default function Home() {
     flex: "0 0 auto",
   });
 
+  async function loadPlacesSequentially(opts: { bbox: string; enabledKinds: PlaceKind[]; signal: AbortSignal; seq: number }) {
+    const { bbox, enabledKinds, signal, seq } = opts;
+
+    // clear places so you can watch them appear one by one
+    setPlaces([]);
+
+    for (const kind of enabledKinds) {
+      // if a newer refresh started, stop
+      if (seq !== refreshSeq.current) return;
+
+      const res = await fetch(`/api/places?bbox=${encodeURIComponent(bbox)}&kind=${encodeURIComponent(kind)}`, { signal }).catch(
+        () => null
+      );
+
+      if (!res || !res.ok) continue;
+
+      const json = await res.json().catch(() => ({}));
+      const incoming: Place[] = Array.isArray(json?.places) ? json.places : [];
+
+      // stop if newer refresh started
+      if (seq !== refreshSeq.current) return;
+
+      // append incrementally
+      setPlaces((prev) => {
+        const seen = new Set(prev.map((p) => p.id));
+        const next = [...prev];
+        for (const p of incoming) {
+          if (!seen.has(p.id)) next.push(p);
+        }
+        return next;
+      });
+    }
+  }
+
   function pickBestVoice() {
     const voices = window.speechSynthesis.getVoices();
-    const preferred = [
-      "Samantha",
-      "Karen",
-      "Daniel",
-      "Google US English",
-      "Google UK English Female",
-      "Google UK English Male",
-    ];
+    const preferred = ["Samantha", "Karen", "Daniel", "Google US English", "Google UK English Female", "Google UK English Male"];
 
     for (const name of preferred) {
       const v = voices.find((x) => x.name === name);
       if (v) return v;
     }
 
-    return voices.find((v) => v.lang?.startsWith("en-US")) ||
-           voices.find((v) => v.lang?.startsWith("en-GB")) ||
-           voices[0] ||
-           null;
+    return voices.find((v) => v.lang?.startsWith("en-US")) || voices.find((v) => v.lang?.startsWith("en-GB")) || voices[0] || null;
   }
 
-  function buildTtsSummaryText(opts: {
-    reportSummary?: string | null;
-    reportCount: number;
-    camerasInCell: number;
-    camerasNearby: number;
-  }) {
+  function buildTtsSummaryText(opts: { reportSummary?: string | null; reportCount: number; camerasInCell: number; camerasNearby: number }) {
     const { reportSummary, reportCount, camerasInCell, camerasNearby } = opts;
 
     const communityLine =
@@ -285,7 +335,7 @@ export default function Home() {
     const full = `${communityLine} ${mapLine}`.replace(/\s+/g, " ").trim();
     return full.slice(0, 240);
   }
-  
+
   async function speakBrowser(text: string) {
     const ensureVoices = () =>
       new Promise<void>((resolve) => {
@@ -334,9 +384,9 @@ export default function Home() {
 
   function scheduleRefresh(delayMs = 250) {
     if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
-      refreshTimer.current = window.setTimeout(() => {
-        refresh();
-      }, delayMs);
+    refreshTimer.current = window.setTimeout(() => {
+      refresh();
+    }, delayMs);
   }
 
   function flyToUser() {
@@ -362,6 +412,7 @@ export default function Home() {
       },
       (err) => {
         console.log("geolocation error:", err?.message);
+        refresh();
         setBooting(false);
       },
       { enableHighAccuracy: true, timeout: 8000 }
@@ -383,15 +434,17 @@ export default function Home() {
 
     const bbox = bboxFromMap(map);
 
-    try {
-      const wantPlaces = viewState.zoom >= 12;
+    // Read zoom from the map so refresh is never blocked by stale React state
+    const zoomNow = Number(map.getZoom());
+    const reportResNow = zoomNow >= 15 ? 12 : zoomNow >= 12 ? 10 : 8;
 
-      const [camsRes, repRes, placesRes] = await Promise.all([
+    try {
+      const wantPlaces = zoomNow >= 12;
+
+      // only cameras + reports in parallel
+      const [camsRes, repRes] = await Promise.all([
         fetch(`/api/cameras?bbox=${encodeURIComponent(bbox)}`, { signal: controller.signal }),
-        fetch(`/api/report?bbox=${encodeURIComponent(bbox)}&res=${reportRes}`, { signal: controller.signal }),
-        wantPlaces 
-          ? fetch(`/api/places?bbox=${encodeURIComponent(bbox)}`, { signal: controller.signal }).catch(() => null)
-          : Promise.resolve(null),
+        fetch(`/api/report?bbox=${encodeURIComponent(bbox)}&res=${reportResNow}`, { signal: controller.signal }),
       ]);
 
       if (mySeq !== refreshSeq.current) return;
@@ -412,13 +465,17 @@ export default function Home() {
       if (mySeq !== refreshSeq.current) return;
       setReportCells(repJson.cells || []);
 
-      if (placesRes && placesRes.ok) {
-        const placesJson = await placesRes.json();
-        if (mySeq === refreshSeq.current) setPlaces(placesJson.places || []);
-      } else if (!wantPlaces) {
+      // places load AFTER, sequentially, and only for enabled kinds
+      if (wantPlaces) {
+        await loadPlacesSequentially({
+          bbox,
+          enabledKinds,
+          signal: controller.signal,
+          seq: mySeq,
+        });
+      } else {
         setPlaces([]);
       }
-
     } catch (e: any) {
       if (e?.name === "AbortError") return;
       if (mySeq !== refreshSeq.current) return;
@@ -430,57 +487,66 @@ export default function Home() {
   }
 
   async function runRecommend() {
-  const mySeq = ++recSeq.current;
+    const mySeq = ++recSeq.current;
 
-  // cancel any previous recommend call
-  recAbortRef.current?.abort();
-  const controller = new AbortController();
-  recAbortRef.current = controller;
+    // cancel any previous recommend call
+    recAbortRef.current?.abort();
+    const controller = new AbortController();
+    recAbortRef.current = controller;
 
-  try {
-    setRecommending(true);
-    setLastError(null);
+    try {
+      setRecommending(true);
+      setLastError(null);
 
-    const lat = viewState.latitude;
-    const lon = viewState.longitude;
+      const lat = viewState.latitude;
+      const lon = viewState.longitude;
 
-    // optional: hard timeout (prevents hanging forever)
-    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+      // optional: hard timeout (prevents hanging forever)
+      const timeoutId = window.setTimeout(() => controller.abort(), 15000);
 
-    const res = await fetch("/api/recommend", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: askText, lat, lon, maxResults: 5 }),
-      signal: controller.signal,
-    });
+      const res = await fetch("/api/recommend", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          text: askText,
+          lat,
+          lon,
+          maxResults: 30, // ask for more, so filtering still leaves enough
+          excludeKinds: disabledKinds, // tell backend too (next section)
+        }),
+        signal: controller.signal,
+      });
 
-    window.clearTimeout(timeoutId);
+      window.clearTimeout(timeoutId);
 
-    // If a newer request started, ignore this one
-    if (mySeq !== recSeq.current) return;
+      // If a newer request started, ignore this one
+      if (mySeq !== recSeq.current) return;
 
-    const json = await res.json().catch(() => ({}));
+      const json = await res.json().catch(() => ({}));
 
-    if (!res.ok) throw new Error(json?.error || `recommend failed (${res.status})`);
-    if (json?.error) throw new Error(json.error);
+      if (!res.ok) throw new Error(json?.error || `recommend failed (${res.status})`);
+      if (json?.error) throw new Error(json.error);
 
-    setRecIntentLabel(String(json?.intentLabel || "Recommendation"));
-    setRecommendations(Array.isArray(json?.results) ? json.results : []);
-  } catch (e: any) {
-    // key part: ignore aborts
-    if (e?.name === "AbortError" || String(e?.message || "").toLowerCase().includes("aborted")) {
-      return;
+      setRecIntentLabel(String(json?.intentLabel || "Recommendation"));
+      const raw = Array.isArray(json?.results) ? json.results : [];
+      const filtered = raw.filter((r: RecommendItem) => kindEnabled[r.place.kind]);
+
+      setRecommendations(filtered.slice(0, 5));
+    } catch (e: any) {
+      // key part: ignore aborts
+      if (e?.name === "AbortError" || String(e?.message || "").toLowerCase().includes("aborted")) {
+        return;
+      }
+
+      console.error(e);
+      setLastError(String(e?.message || e));
+      setRecommendations([]);
+      setRecIntentLabel(null);
+    } finally {
+      // only stop spinner if this is still the latest call
+      if (mySeq === recSeq.current) setRecommending(false);
     }
-
-    console.error(e);
-    setLastError(String(e?.message || e));
-    setRecommendations([]);
-    setRecIntentLabel(null);
-  } finally {
-    // only stop spinner if this is still the latest call
-    if (mySeq === recSeq.current) setRecommending(false);
   }
-}
 
   // Memoize heavy GeoJSON
   const reportGeo = useMemo(() => {
@@ -527,15 +593,13 @@ export default function Home() {
     );
 
     if (places && places.length > 0) {
-      const placeRadius =
-        viewState.zoom >= 16 ? 22 :
-        viewState.zoom >= 14 ? 28 :
-        34;
+      const placeRadius = viewState.zoom >= 16 ? 22 : viewState.zoom >= 14 ? 28 : 34;
 
+      const filteredPlaces = places.filter((p) => kindEnabled[p.kind]);
       mapLayers.push(
         new ScatterplotLayer<Place>({
           id: "places-layer",
-          data: places,
+          data: filteredPlaces,
           getPosition: (d) => [Number(d.lon), Number(d.lat)],
           getFillColor: () => [0, 255, 208, 180],
           getRadius: placeRadius,
@@ -565,13 +629,10 @@ export default function Home() {
       );
     }
 
-    const cameraRadius =
-      viewState.zoom >= 17 ? 18 :
-      viewState.zoom >= 15 ? 28 :
-      60;
+    const cameraRadius = viewState.zoom >= 17 ? 18 : viewState.zoom >= 15 ? 28 : 60;
 
     if (viewState.zoom >= 13 && points && points.length > 0 && mode === "safety") {
-      const validPoints = points.filter(p => p.lat != null && p.lon != null);
+      const validPoints = points.filter((p) => p.lat != null && p.lon != null);
       if (validPoints.length > 0) {
         mapLayers.push(
           new HexagonLayer<Pt>({
@@ -639,12 +700,11 @@ export default function Home() {
     );
 
     return mapLayers;
-  }, [booting, points, places, reportCells, selected, hovered, viewState.zoom, mode, recLayerData]);
+  }, [booting, points, places, reportCells, selected, hovered, viewState.zoom, mode, recLayerData, kindEnabled, hoveredGeo, reportGeo, selectedGeo]);
 
   // UPDATED: Main wrapper is now a full-screen flex container
   return (
     <div style={{ display: "flex", width: "100vw", height: "100vh", overflow: "hidden", background: "#000" }}>
-      
       {/* Left Sidebar Layout */}
       <div style={panelStyle}>
         <div style={{ fontWeight: 800, fontSize: 16 }}>Blind Spot</div>
@@ -749,6 +809,24 @@ export default function Home() {
           )}
         </div>
 
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Place filters</div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {PLACE_KINDS.map((k) => (
+              <button
+                key={k}
+                style={btn(kindEnabled[k])}
+                onClick={() => setKindEnabled((prev) => ({ ...prev, [k]: !prev[k] }))}
+              >
+                {kindLabel(k)}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ ...smallText }}>Disabled kinds will not appear on the map and will not be suggested by AI.</div>
+        </div>
+
         {/* --- Legend --- */}
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>Legend</div>
@@ -776,7 +854,7 @@ export default function Home() {
           </div>
 
           <div style={legendRow}>
-            <span style={swatch( "rgba(255, 140, 0, 0.60)")} />
+            <span style={swatch("rgba(255, 140, 0, 0.60)")} />
             <span>Orange cell: 2 to 4 reports (more confidence).</span>
           </div>
 
@@ -784,7 +862,7 @@ export default function Home() {
             <span style={swatch("rgba(140, 0, 255, 0.70)")} />
             <span>Purple cell: 5 or more reports (community confirmed).</span>
           </div>
-          
+
           <div style={legendRow}>
             <span style={swatch("rgba(255, 0, 255, 0.63)")} />
             <span>Magenta cell: conflicting reports.</span>
@@ -794,7 +872,7 @@ export default function Home() {
             <span style={swatch("rgba(0, 200, 255, 0.35)")} />
             <span>Cyan outline: currently selected cell.</span>
           </div>
-          
+
           <div style={legendRow}>
             <span style={swatch("rgba(0, 255, 200, 0.75)")} />
             <span>Teal rings: AI recommended spots.</span>
@@ -821,11 +899,7 @@ export default function Home() {
           </div>
         </div>
 
-        {lastError && (
-          <div style={{ ...smallText, color: "rgba(255,120,120,0.95)" }}>
-            Error: {lastError}
-          </div>
-        )}
+        {lastError && <div style={{ ...smallText, color: "rgba(255,120,120,0.95)" }}>Error: {lastError}</div>}
 
         {/* --- Reporting UI --- */}
         {selected && (
@@ -833,18 +907,18 @@ export default function Home() {
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.85)" }}>
               <b>Selected cell:</b> {selected.h3}
             </div>
-            
+
             {(() => {
-               const cellData = reportCells.find((c) => c.h3_index === selected.report_h3);
-               const totalCount = Math.max(cellData?.camera_present_count || 0, cellData?.camera_absent_count || 0);
-               if (totalCount >= 5) {
-                 return (
+              const cellData = reportCells.find((c) => c.h3_index === selected.report_h3);
+              const totalCount = Math.max(cellData?.camera_present_count || 0, cellData?.camera_absent_count || 0);
+              if (totalCount >= 5) {
+                return (
                   <div style={{ fontSize: 13, color: "#a855f7", fontWeight: "bold", marginTop: 4 }}>
                     ✓ Community confirmed
                   </div>
-                 );
-               }
-               return null;
+                );
+              }
+              return null;
             })()}
 
             <textarea
@@ -865,16 +939,10 @@ export default function Home() {
             />
 
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <button
-                style={btn(claim === "camera_present")}
-                onClick={() => setClaim("camera_present")}
-              >
+              <button style={btn(claim === "camera_present")} onClick={() => setClaim("camera_present")}>
                 Camera here
               </button>
-              <button
-                style={btn(claim === "camera_absent")}
-                onClick={() => setClaim("camera_absent")}
-              >
+              <button style={btn(claim === "camera_absent")} onClick={() => setClaim("camera_absent")}>
                 No camera seen
               </button>
             </div>
@@ -897,7 +965,12 @@ export default function Home() {
                 <img
                   src={proofImage}
                   alt="proof"
-                  style={{ marginTop: 8, width: "100%", borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)" }}
+                  style={{
+                    marginTop: 8,
+                    width: "100%",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.15)",
+                  }}
                 />
               )}
             </div>
@@ -1012,7 +1085,6 @@ export default function Home() {
                     });
 
                     await playTTS(ttsText);
-
                   } catch (e: any) {
                     console.error(e);
                     setLastError(String(e?.message || e));
@@ -1089,6 +1161,14 @@ export default function Home() {
                 });
               }
 
+              // NEW: load immediately once map is ready (no click needed)
+              if (!didAutoStartRef.current) {
+                didAutoStartRef.current = true;
+                setBooting(false);
+                scheduleRefresh(0);
+              }
+
+              // keep your existing locate flow
               setTimeout(() => {
                 flyToUser();
               }, 600);
@@ -1098,7 +1178,6 @@ export default function Home() {
           </Map>
         </DeckGL>
       </div>
-
     </div>
   );
 }

@@ -44,6 +44,7 @@ type RecommendRequest = {
   lat: number;
   lon: number;
   maxResults?: number;
+  excludeKinds?: string[]; // <-- ADD THIS
 };
 
 type RecommendItem = {
@@ -61,6 +62,7 @@ type RecommendItem = {
 
 type CacheEntry = { at: number; data: any };
 const memCache = new Map<string, CacheEntry>();
+
 
 function baseUrlFromReq(req: Request) {
   const host = req.headers.get("host") || "localhost:3000";
@@ -218,6 +220,8 @@ export async function POST(req: Request) {
     body = null;
   }
 
+  const exclude = new Set<PlaceKind>((body?.excludeKinds || []) as PlaceKind[]);
+
   const text = String(body?.text || "").slice(0, 800);
   const lat = Number(body?.lat);
   const lon = Number(body?.lon);
@@ -230,7 +234,8 @@ export async function POST(req: Request) {
   const intent = classifyIntent(text);
   const cfg = intentConfig(intent);
 
-  const cacheKey = `rec:${intent}:${lat.toFixed(4)}:${lon.toFixed(4)}:${maxResults}`;
+  const excludeKey = [...exclude].sort().join("|");
+  const cacheKey = `rec:${intent}:${lat.toFixed(4)}:${lon.toFixed(4)}:${maxResults}:ex=${excludeKey}`;
   const now = Date.now();
   const ttlMs = 60 * 1000;
 
@@ -242,7 +247,10 @@ export async function POST(req: Request) {
   const bbox = metersToBBox(lat, lon, cfg.radiusM);
   const bboxParam = bboxToParam(bbox);
 
-  const kindsParam = cfg.kindsQuery.join(",");
+  const allowedKinds = (cfg.kindsQuery as readonly string[])
+  .filter((k) => !exclude.has(k as PlaceKind));
+
+    const kindsParam = allowedKinds.join(",");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
@@ -308,6 +316,9 @@ export async function POST(req: Request) {
     const scored: RecommendItem[] = [];
 
     function scorePlace(pl: Place) {
+
+        if (exclude.has(pl.kind)) return;
+
       const d = haversineMeters(lat, lon, pl.lat, pl.lon);
       if (d > cfg.maxDistanceM * 1.05) return;
 
@@ -344,12 +355,18 @@ export async function POST(req: Request) {
 
       // Hotspots lean more on community confidence
       const isHotspot = pl.kind === "community_hotspot";
+
+      const evidenceBoost =
+        (camsK1 >= 1 ? 0.35 : 0) +    // OSM camera markers nearby
+        (yes >= 1 ? 0.35 : 0);   
+
       const score =
         typeW * 2.0 +
         distScore * 2.0 +
         camScore * (isHotspot ? 1.2 : 1.8) +
         repScore * (isHotspot ? 2.6 : 2.0) -
-        conflictPenalty;
+        conflictPenalty +
+        evidenceBoost;
 
       const reasons: string[] = [];
 
@@ -393,13 +410,35 @@ export async function POST(req: Request) {
 
     scored.sort((a, b) => b.score - a.score);
 
-    // Dedupe so you do not get 5 things on the same block
-    const deduped = dedupeByDistance(scored, 250);
+// Dedupe so you do not get 5 things on the same block
+const deduped = dedupeByDistance(scored, 250);
 
-    // Keep only good stuff: don’t recommend low scores
-    const filtered = deduped.filter((x) => x.score >= 1.6);
+// Evidence means: camera markers nearby OR community "yes" OR hotspot
+const hasEvidence = (x: RecommendItem) =>
+  x.cameras_in_k1 > 0 || x.report_yes > 0 || x.place.kind === "community_hotspot";
 
-    const top = filtered.slice(0, maxResults);
+// Split into two buckets so evidence always ranks first
+const primary = deduped.filter(hasEvidence);
+const secondary = deduped.filter((x) => !hasEvidence(x));
+
+// Keep your old safety cutoff only for the primary bucket
+const primaryGood = primary.filter((x) => x.score >= 1.6);
+
+// Take from primary first
+const top: RecommendItem[] = primaryGood.slice(0, maxResults);
+
+// If not enough, fill with the best remaining items even if no cameras
+if (top.length < maxResults) {
+  const used = new Set(top.map((x) => x.place.id));
+  const fillFrom = [...primary, ...secondary]; // still keeps evidence-first ordering
+
+  for (const it of fillFrom) {
+    if (top.length >= maxResults) break;
+    if (used.has(it.place.id)) continue;
+    top.push(it);
+    used.add(it.place.id);
+  }
+}
 
     const payload = {
       intent,
@@ -414,6 +453,7 @@ export async function POST(req: Request) {
       },
       note: "Recommendations prioritize community-confirmed camera presence and public meetup-friendly places.",
     };
+    
 
     memCache.set(cacheKey, { at: now, data: payload });
 

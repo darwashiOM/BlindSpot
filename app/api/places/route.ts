@@ -149,7 +149,13 @@ async function fetchOverpass(query: string, signal: AbortSignal) {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const bbox = parseBBoxParam(searchParams.get("bbox"));
-  const kinds = parseKindsParam(searchParams.get("kinds"));
+
+  // NEW: allow single kind=police (for sequential loading)
+  const kindRaw = searchParams.get("kind");
+  const kinds =
+    kindRaw && (ALL_KINDS as string[]).includes(kindRaw)
+      ? ([kindRaw as PlaceKind] as PlaceKind[])
+      : parseKindsParam(searchParams.get("kinds"));
 
   if (!bbox) {
     return NextResponse.json({ places: [], error: "bad_bbox" }, { status: 200 });
@@ -165,8 +171,9 @@ export async function GET(req: Request) {
     );
   }
 
+  // IMPORTANT: do not mutate kinds with .sort()
   const key =
-    `places:${kinds.sort().join("|")}:` +
+    `places:${[...kinds].sort().join("|")}:` +
     `${bbox.south.toFixed(4)}:${bbox.west.toFixed(4)}:${bbox.north.toFixed(4)}:${bbox.east.toFixed(4)}`;
 
   const now = Date.now();
