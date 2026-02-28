@@ -11,8 +11,6 @@ import { FlyToInterpolator } from "@deck.gl/core";
 
 type Pt = { lat: number; lon: number };
 
-const REPORT_RES = 12;   // building-ish level
-const PICK_RES = 12;     // smaller highlight when clicking
 
 
 function bboxFromMap(map: maplibregl.Map) {
@@ -106,7 +104,7 @@ function buildDetailedTtsText(opts: {
   signageCount: number;
   camerasInCell: number;
   camerasNearby: number;
-  mode: "privacy" | "safety";
+  mode: "safety";
   signageText?: string | null;
 }) {
   const { reportCount, signageCount, camerasInCell, camerasNearby, mode, signageText } = opts;
@@ -146,11 +144,7 @@ function buildDetailedTtsText(opts: {
       ? `The sign says: ${signageText.trim().slice(0, 90)}.`
       : "";
 
-  const modeLine =
-    mode === "privacy"
-      ? `You’re in privacy mode, so lower monitoring is the goal.`
-      : `You’re in safety mode, so more monitoring might feel “safer”.`;
-
+  const modeLine = ""
   const full = `${camLine} ${reportLine} ${confidenceLine} ${signLine} ${signTextLine} ${modeLine}`
     .replace(/\s+/g, " ")
     .trim();
@@ -163,6 +157,8 @@ export default function Home() {
   const refreshTimer = useRef<number | null>(null);
   const refreshSeq = useRef(0);
 
+  
+
   const [viewState, setViewState] = useState({
     longitude: -75.75,
     latitude: 39.68,
@@ -171,21 +167,26 @@ export default function Home() {
     pitch: 0,
   });
 
-  const mode: "safety" = "safety";
+
+  const reportRes =
+    viewState.zoom >= 15 ? 12 :
+    viewState.zoom >= 12 ? 10 :
+    8;
+
+  const pickRes = reportRes;
+
+  const mode = "safety";
   const [points, setPoints] = useState<Pt[]>([]);
   const [loading, setLoading] = useState(false);
   const [submittingReport, setSubmittingReport] = useState(false);
-
-  // New location states
-  const [hasUserLocated, setHasUserLocated] = useState(false);
-  const [lastBbox, setLastBbox] = useState<[number, number, number, number] | null>(null);
+  const [booting, setBooting] = useState(true);
 
   const [reportText, setReportText] = useState("");
   const [proofImage, setProofImage] = useState<string | null>(null);
   const [selected, setSelected] = useState<{ lat: number; lon: number; h3: string; report_h3: string; } | null>(null);
 
   const [claim, setClaim] = useState<"camera_present" | "camera_absent">("camera_present");
-
+  const abortRef = useRef<AbortController | null>(null);
   const [hovered, setHovered] = useState<{ lat: number; lon: number; h3: string; report_h3: string; } | null>(null);
   const [reportCells, setReportCells] = useState<
     Array<{
@@ -275,6 +276,33 @@ export default function Home() {
            null;
   }
 
+  function buildTtsSummaryText(opts: {
+    reportSummary?: string | null;
+    reportCount: number;
+    camerasInCell: number;
+    camerasNearby: number;
+  }) {
+    const { reportSummary, reportCount, camerasInCell, camerasNearby } = opts;
+
+    const communityLine =
+      reportCount === 0
+        ? "No community reports yet."
+        : reportSummary && reportSummary.trim()
+          ? reportSummary.trim()
+          : "People have reported in this area, but there is no summary yet.";
+
+    // This is based on your current source (OpenStreetMap camera tags)
+    const mapLine =
+      camerasInCell > 0
+        ? "Map data shows camera markers right here."
+        : camerasNearby > 0
+          ? "Map data shows camera markers nearby."
+          : "Map data does not show any camera markers here.";
+
+    const full = `${communityLine} ${mapLine}`.replace(/\s+/g, " ").trim();
+    return full.slice(0, 240);
+  }
+  
   async function speakBrowser(text: string) {
     // Some browsers load voices async
     const ensureVoices = () =>
@@ -300,12 +328,27 @@ export default function Home() {
     window.speechSynthesis.speak(u);
   }
 
-  function reportCellsToGeoJSON() {
+    // CHANGE: build heavy GeoJSON only when the underlying data changes
+  const reportGeo = useMemo(() => {
     return {
       type: "FeatureCollection",
       features: reportCells.map((c) => h3CellToFeature(c.h3_index, c as any)),
     };
-  }
+  }, [reportCells]);
+
+  const selectedGeo = useMemo(() => {
+    return {
+      type: "FeatureCollection",
+      features: selected ? [h3CellToFeature(selected.h3)] : [],
+    };
+  }, [selected]);
+
+  const hoveredGeo = useMemo(() => {
+    return {
+      type: "FeatureCollection",
+      features: hovered ? [h3CellToFeature(hovered.h3)] : [],
+    };
+  }, [hovered]);
 
   async function playTTS(text: string) {
     const res = await fetch("/api/tts", {
@@ -330,11 +373,11 @@ export default function Home() {
     throw new Error(err?.error || "TTS failed");
   }
 
-  function scheduleRefresh() {
+  function scheduleRefresh(delayMs = 250) {
     if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
-    refreshTimer.current = window.setTimeout(() => {
-      refresh();
-    }, 700);
+      refreshTimer.current = window.setTimeout(() => {
+        refresh();
+      }, delayMs);
   }
 
   function flyToUser() {
@@ -344,25 +387,24 @@ export default function Home() {
       (pos) => {
         const { latitude, longitude } = pos.coords;
 
-        setHasUserLocated(true);
-
         setViewState((v) => ({
           ...v,
           latitude,
           longitude,
-          zoom: 18,
+          zoom: 15,
           transitionDuration: 1400,
           transitionInterpolator: new FlyToInterpolator(),
         }));
 
+        // after fly animation is done, then fetch once
         window.setTimeout(() => {
-          scheduleRefresh();
-        }, 1200);
+          refresh();
+          setBooting(false);
+        }, 1800); // 1400 transition + extra buffer
       },
       (err) => {
-        // If user denies location, keep overlay off
-        setHasUserLocated(false);
-        setLastBbox(null);
+        // If user denies location, keep overlay of
+
         console.log("geolocation error:", err?.message);
       },
       { enableHighAccuracy: true, timeout: 8000 }
@@ -370,112 +412,75 @@ export default function Home() {
   }
 
   async function refresh() {
-    const map = mapRef.current?.getMap();
-    if (!map) return;
-  
-    const mySeq = ++refreshSeq.current; // only the latest refresh can update state
-  
-    setLoading(true);
-    setLastError(null);
-  
-    const bbox = bboxFromMap(map);
-  
-    // track bbox for the red overlay
-    const b = map.getBounds();
-    if (hasUserLocated) {
-      setLastBbox([b.getSouth(), b.getWest(), b.getNorth(), b.getEast()]);
-    } else {
-      setLastBbox(null);
+  const map = mapRef.current?.getMap();
+  if (!map) return;
+
+  const mySeq = ++refreshSeq.current;
+
+  // cancel any previous in-flight refresh
+  abortRef.current?.abort();
+  const controller = new AbortController();
+  abortRef.current = controller;
+
+  setLoading(true);
+  setLastError(null);
+
+  const bbox = bboxFromMap(map);
+
+  try {
+    const [camsRes, repRes] = await Promise.all([
+      fetch(`/api/cameras?bbox=${encodeURIComponent(bbox)}`, { signal: controller.signal }),
+      fetch(`/api/report?bbox=${encodeURIComponent(bbox)}&res=${reportRes}`, { signal: controller.signal }),
+    ]);
+
+    if (mySeq !== refreshSeq.current) return;
+
+    if (!camsRes.ok) {
+      const t = await camsRes.text().catch(() => "");
+      throw new Error(`cameras failed (${camsRes.status}): ${t.slice(0, 200)}`);
     }
-  
-    try {
-      const [camsRes, repRes] = await Promise.all([
-        fetch(`/api/cameras?bbox=${encodeURIComponent(bbox)}`),
-        fetch(`/api/report?bbox=${encodeURIComponent(bbox)}&res=${REPORT_RES}`),
-      ]);
-  
-      // if a newer refresh started, ignore this result
-      if (mySeq !== refreshSeq.current) return;
-  
-      if (!camsRes.ok) {
-        const t = await camsRes.text().catch(() => "");
-        throw new Error(`cameras failed (${camsRes.status}): ${t.slice(0, 200)}`);
-      }
-      const camsJson = await camsRes.json();
-  
-      if (mySeq !== refreshSeq.current) return;
-      setPoints(camsJson.points || []);
-  
-      if (!repRes.ok) {
-        const t = await repRes.text().catch(() => "");
-        throw new Error(`reports failed (${repRes.status}): ${t.slice(0, 200)}`);
-      }
-      const repJson = await repRes.json();
-  
-      if (mySeq !== refreshSeq.current) return;
-      setReportCells(repJson.cells || []);
-    } catch (e: any) {
-      if (mySeq !== refreshSeq.current) return;
-      console.error(e);
-      setLastError(String(e?.message || e));
-    } finally {
-      if (mySeq === refreshSeq.current) setLoading(false);
+    const camsJson = await camsRes.json();
+    if (mySeq !== refreshSeq.current) return;
+    setPoints(camsJson.points || []);
+
+    if (!repRes.ok) {
+      const t = await repRes.text().catch(() => "");
+      throw new Error(`reports failed (${repRes.status}): ${t.slice(0, 200)}`);
     }
+    const repJson = await repRes.json();
+    if (mySeq !== refreshSeq.current) return;
+    setReportCells(repJson.cells || []);
+  } catch (e: any) {
+    if (e?.name === "AbortError") return; // ignore cancelled requests
+    if (mySeq !== refreshSeq.current) return;
+    console.error(e);
+    setLastError(String(e?.message || e));
+  } finally {
+    if (mySeq === refreshSeq.current) setLoading(false);
   }
+}
 
   const layers = useMemo(() => {
-    const reportGeo = reportCellsToGeoJSON();
-
-    // Red tint now requires both hasUserLocated and lastBbox
-    const bboxGeo =
-      hasUserLocated && lastBbox
-        ? {
-            type: "FeatureCollection",
-            features: [
-              {
-                type: "Feature",
-                properties: {},
-                geometry: {
-                  type: "Polygon",
-                  coordinates: [
-                    [
-                      [lastBbox[1], lastBbox[0]],
-                      [lastBbox[3], lastBbox[0]],
-                      [lastBbox[3], lastBbox[2]],
-                      [lastBbox[1], lastBbox[2]],
-                      [lastBbox[1], lastBbox[0]],
-                    ],
-                  ],
-                },
-              },
-            ],
-          }
-        : { type: "FeatureCollection", features: [] };
-
-    // Create GeoJSON for the currently selected hex
-    const selectedGeo = {
-      type: "FeatureCollection",
-      features: selected ? [h3CellToFeature(selected.h3)] : [],
-    };
-
-    const hoveredGeo = {
-      type: "FeatureCollection",
-      features: hovered ? [h3CellToFeature(hovered.h3)] : [],
-    };
+    if (booting) {
+      // keep it light while we locate + fly
+      return [];
+    }
 
     const mapLayers = [];
 
-    // 1. Red Base Layer (Only shows up when user is located)
-    mapLayers.push(
-      new GeoJsonLayer({
-        id: "no-camera-red-base",
-        data: bboxGeo as any,
-        pickable: false,
-        stroked: false,
-        filled: true,
-        getFillColor: [220, 0, 0, 35],
-      })
-    );
+
+        mapLayers.push(
+          new GeoJsonLayer({
+            id: "hovered-hex",
+            data: hoveredGeo as any,
+            pickable: true,
+            stroked: true,
+            filled: false,
+            lineWidthMinPixels: 3,
+            getLineColor: [0, 255, 255, 220],
+            parameters: { depthTest: false },
+          })
+        );
 
     // Dynamic Camera Radius based on Zoom Level
     const cameraRadius =
@@ -484,7 +489,7 @@ export default function Home() {
       60;
 
     // 2. Camera Layers
-    if (points && points.length > 0) {
+    if (viewState.zoom >= 13 && points && points.length > 0) {
       const validPoints = points.filter(p => p.lat != null && p.lon != null);
       
       if (validPoints.length > 0) {
@@ -511,19 +516,6 @@ export default function Home() {
         }
       }
     }
-
-    mapLayers.push(
-      new GeoJsonLayer({
-        id: "hovered-hex",
-        data: hoveredGeo as any,
-        pickable: false,
-        stroked: true,
-        filled: false,
-        lineWidthMinPixels: 3,
-        getLineColor: [0, 255, 255, 220],
-        parameters: { depthTest: false },
-      })
-    );
 
     // 3. Community Reports Layer
     mapLayers.push(
@@ -562,7 +554,7 @@ export default function Home() {
       new GeoJsonLayer({
         id: "selected-hex",
         data: selectedGeo as any,
-        pickable: false,
+        pickable: true,
         stroked: true,
         filled: true,
         lineWidthMinPixels: 5,
@@ -573,20 +565,14 @@ export default function Home() {
     );
 
     return mapLayers;
-  }, [points, reportCells, selected, lastBbox, hasUserLocated, hovered, viewState.zoom, mode]);
+  }, [booting, points, reportCells, selected, hovered, viewState.zoom, mode]);
 
   return (
     <div style={{ height: "100vh" }}>
       <div style={panelStyle}>
-        <div style={{ fontWeight: 800, fontSize: 16 }}>Privacy ↔ Safety</div>
+        <div style={{ fontWeight: 800, fontSize: 16 }}>Blind Spot</div>
 
         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-          <button style={btn(mode === "privacy")} onClick={() => setMode("privacy")}>
-            Privacy
-          </button>
-          <button style={btn(mode === "safety")} onClick={() => setMode("safety")}>
-            Safety
-          </button>
           <button style={btn(false)} onClick={refresh}>
             {loading ? "Loading..." : "Refresh"}
           </button>
@@ -595,11 +581,6 @@ export default function Home() {
           </button>
         </div>
 
-        <div style={smallText}>
-          {mode === "privacy"
-            ? "Privacy mode shows lower monitoring density areas."
-            : "Safety mode shows higher monitoring density areas."}
-        </div>
 
         {/* Legend */}
         <div style={{ marginTop: 12 }}>
@@ -623,18 +604,18 @@ export default function Home() {
           </div>
 
           <div style={legendRow}>
-            <span style={swatch(mode === "privacy" ? "rgba(0, 160, 0, 0.47)" : "rgba(255, 235, 0, 0.55)")} />
-            <span>{mode === "privacy" ? "Light Green cell: 1 report of no cameras." : "Yellow cell: 1 community report in this H3 area."}</span>
+            <span style={swatch("rgba(255, 235, 0, 0.55)")} />
+            <span>{"Yellow cell: 1 community report in this H3 area."}</span>
           </div>
 
           <div style={legendRow}>
-            <span style={swatch(mode === "privacy" ? "rgba(0, 180, 0, 0.59)" : "rgba(255, 140, 0, 0.60)")} />
-            <span>{mode === "privacy" ? "Green cell: 2 to 4 reports." : "Orange cell: 2 to 4 reports (more confidence)."}</span>
+            <span style={swatch( "rgba(255, 140, 0, 0.60)")} />
+            <span>{"Orange cell: 2 to 4 reports (more confidence)."}</span>
           </div>
 
           <div style={legendRow}>
-            <span style={swatch(mode === "privacy" ? "rgba(0, 200, 0, 0.75)" : "rgba(140, 0, 255, 0.70)")} />
-            <span>{mode === "privacy" ? "Dark Green cell: 5+ reports (community confirmed)." : "Purple cell: 5 or more reports (community confirmed)."}</span>
+            <span style={swatch("rgba(140, 0, 255, 0.70)")} />
+            <span>{"Purple cell: 5 or more reports (community confirmed)."}</span>
           </div>
           
           <div style={legendRow}>
@@ -835,18 +816,21 @@ export default function Home() {
 
                     const cell = reportCells.find((c) => c.h3_index === selected.report_h3);
                     
+                    const reportCount =
+                      (cell?.camera_present_count || 0) + (cell?.camera_absent_count || 0);
                     // Retrieve actual camera data for this specific H3 hex and its neighbors
                     const { inCell, nearby } = getCameraCountsForH3(points, selected.report_h3, 1);
 
-                    const ttsText = buildDetailedTtsText({
-                      // Treat sum of positive and negative reports as the total reportCount for TTS
-                      reportCount: (cell?.camera_present_count || 0) + (cell?.camera_absent_count || 0),
-                      signageCount: cell?.signage_count || 0,
+
+
+                    const ttsText = buildTtsSummaryText({
+                      reportSummary: cell?.summary ?? null,
+                      reportCount,
                       camerasInCell: inCell,
                       camerasNearby: nearby,
-                      mode,
-                      signageText: cell?.signage_text ?? null,
                     });
+
+                    
 
                     await playTTS(ttsText);
 
@@ -877,41 +861,51 @@ export default function Home() {
 
       <DeckGL
         viewState={viewState}
-        controller={true}
-        layers={layers}
-        onViewStateChange={({ viewState }) => setViewState(viewState as any)}
+          controller={true}
+          layers={layers}
+          useDevicePixels={1}
+          onViewStateChange={({ viewState }) => {
+            setViewState(viewState as any);
+          }}
+          onInteractionStateChange={(s) => {
+          const active = s.isDragging || s.isPanning || s.isZooming || s.isRotating;
+          if (!active) scheduleRefresh(300); // run shortly after the user stops moving
+        }}
         onHover={(info: any) => {
-          const coord = info?.coordinate;
-          if (!coord) return;
+          if (!info?.viewport) return;
 
-          const [lon, lat] = coord as [number, number];
-          const h3Pick = latLngToCell(lat, lon, PICK_RES);
-          const h3Report = h3Pick; // same res now
+          const [lon, lat] = info.viewport.unproject([info.x, info.y]);
+
+          const h3Pick = latLngToCell(lat, lon, pickRes);
+
+          // only update state if the hovered cell actually changed
+          if (hovered?.h3 === h3Pick) return;
 
           const [centerLat, centerLon] = cellToLatLng(h3Pick);
-          setHovered({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Report });
+          setHovered({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Pick });
         }}
         onClick={(info: any) => {
-          const coord = info?.coordinate;
-          if (!coord) return;
+          if (!info?.viewport) return;
 
-          const [lon, lat] = coord as [number, number];
+          const [lon, lat] = info.viewport.unproject([info.x, info.y]);
 
-          const h3Pick = latLngToCell(lat, lon, PICK_RES);
-          const h3Report = h3Pick;
-
+          const h3Pick = latLngToCell(lat, lon, pickRes);
           const [centerLat, centerLon] = cellToLatLng(h3Pick);
-          setSelected({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Report });
+
+          setSelected({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Pick });
         }}
       >
         <Map
           ref={mapRef}
           {...viewState}
+          pixelRatio={1}
           mapStyle={`https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.NEXT_PUBLIC_MAPTILER_KEY}`}
           onLoad={() => {
-            flyToUser(); 
-          }}
-          onMoveEnd={scheduleRefresh}
+              // wait a bit so the map initializes smoothly
+              setTimeout(() => {
+                flyToUser();
+              }, 600);
+            }}
         >
           <NavigationControl position="bottom-right" />
         </Map>

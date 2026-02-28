@@ -119,20 +119,22 @@ export async function GET(req: Request) {
     const [south, west, north, east] = parsed.data.bbox.split(",").map(Number);
 
     const { rows } = await pool.query(
-      `
-      select
-        h3_index,
-        sum(case when claim = 'camera_present' then 1 else 0 end)::int as camera_present_count,
-        sum(case when claim = 'camera_absent' then 1 else 0 end)::int as camera_absent_count,
-        sum(case when signage_text is not null and signage_text <> '' then 1 else 0 end)::int as signage_count
-      from reports
-      where is_allowed = true
-        and lat between $1 and $2
-        and lon between $3 and $4
-      group by h3_index
-      `,
-      [south, north, west, east]
-    );
+  `
+  select
+    h3_index,
+    sum(case when claim = 'camera_present' then 1 else 0 end)::int as camera_present_count,
+    sum(case when claim = 'camera_absent' then 1 else 0 end)::int as camera_absent_count,
+    sum(case when signage_text is not null and signage_text <> '' then 1 else 0 end)::int as signage_count,
+    (array_agg(summary order by id desc))[1] as summary,
+    (array_agg(signage_text order by id desc))[1] as signage_text
+  from reports
+  where is_allowed = true
+    and lat between $1 and $2
+    and lon between $3 and $4
+  group by h3_index
+  `,
+  [south, north, west, east]
+);
 
     return NextResponse.json({ cells: rows });
   } catch (e: any) {
