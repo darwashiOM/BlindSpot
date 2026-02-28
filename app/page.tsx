@@ -5,11 +5,15 @@ import Map, { NavigationControl, MapRef } from "react-map-gl/maplibre";
 import maplibregl from "maplibre-gl";
 import DeckGL from "@deck.gl/react";
 import { HexagonLayer } from "@deck.gl/aggregation-layers";
-import { GeoJsonLayer } from "@deck.gl/layers";
-import { latLngToCell, cellToBoundary, gridDisk } from "h3-js";
+import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { latLngToCell, cellToBoundary, gridDisk, cellToLatLng, cellToParent } from "h3-js";
 import { FlyToInterpolator } from "@deck.gl/core";
 
 type Pt = { lat: number; lon: number };
+
+const REPORT_RES = 12;   // building-ish level
+const PICK_RES = 12;     // smaller highlight when clicking
+
 
 function bboxFromMap(map: maplibregl.Map) {
   const b = map.getBounds();
@@ -20,13 +24,15 @@ function bboxFromMap(map: maplibregl.Map) {
   return [south, west, north, east].map((x) => Number(x.toFixed(6))).join(",");
 }
 
+
+
 function getCameraCountsForH3(points: Pt[], h3Index: string, k = 1) {
   // Cameras exactly inside the clicked hex
-  const inCell = points.filter((p) => latLngToCell(p.lat, p.lon, H3_RES) === h3Index).length;
+  const inCell = points.filter((p) => latLngToCell(p.lat, p.lon, REPORT_RES) === h3Index).length;
 
   // Cameras in nearby hexes (k=1 means neighbors)
   const nearbySet = new Set(gridDisk(h3Index, k));
-  const nearby = points.filter((p) => nearbySet.has(latLngToCell(p.lat, p.lon, H3_RES))).length;
+  const nearby = points.filter((p) => nearbySet.has(latLngToCell(p.lat, p.lon, REPORT_RES))).length;
 
   return { inCell, nearby };
 }
@@ -50,7 +56,6 @@ function h3CellToFeature(h3Index: string, props: Record<string, any> = {}) {
     geometry: { type: "Polygon", coordinates: [coords] },
   };
 }
-
 
 async function fileToCompressedDataUrl(
   file: File,
@@ -94,6 +99,7 @@ async function fileToCompressedDataUrl(
 
   return out;
 }
+
 
 function buildDetailedTtsText(opts: {
   reportCount: number;
@@ -152,8 +158,6 @@ function buildDetailedTtsText(opts: {
   return full.slice(0, 260);
 }
 
-const H3_RES = 9;
-
 export default function Home() {
   const mapRef = useRef<MapRef | null>(null);
   const refreshTimer = useRef<number | null>(null);
@@ -167,7 +171,7 @@ export default function Home() {
     pitch: 0,
   });
 
-  const [mode, setMode] = useState<"privacy" | "safety">("privacy");
+  const mode: "safety" = "safety";
   const [points, setPoints] = useState<Pt[]>([]);
   const [loading, setLoading] = useState(false);
   const [submittingReport, setSubmittingReport] = useState(false);
@@ -178,13 +182,16 @@ export default function Home() {
 
   const [reportText, setReportText] = useState("");
   const [proofImage, setProofImage] = useState<string | null>(null);
-  const [selected, setSelected] = useState<{ lat: number; lon: number; h3: string } | null>(null);
+  const [selected, setSelected] = useState<{ lat: number; lon: number; h3: string; report_h3: string; } | null>(null);
 
-  const [hovered, setHovered] = useState<{ lat: number; lon: number; h3: string } | null>(null);
+  const [claim, setClaim] = useState<"camera_present" | "camera_absent">("camera_present");
+
+  const [hovered, setHovered] = useState<{ lat: number; lon: number; h3: string; report_h3: string; } | null>(null);
   const [reportCells, setReportCells] = useState<
-    Array<{ 
-      h3_index: string; 
-      report_count: number; 
+    Array<{
+      h3_index: string;
+      camera_present_count: number;
+      camera_absent_count: number;
       signage_count: number;
       summary?: string;
       signage_text?: string;
@@ -244,61 +251,61 @@ export default function Home() {
   });
 
   function pickBestVoice() {
-  const voices = window.speechSynthesis.getVoices();
+    const voices = window.speechSynthesis.getVoices();
 
-  // Prefer higher quality English voices on macOS / Chrome
-  const preferred = [
-    "Samantha",
-    "Karen",
-    "Daniel",
-    "Google US English",
-    "Google UK English Female",
-    "Google UK English Male",
-  ];
+    // Prefer higher quality English voices on macOS / Chrome
+    const preferred = [
+      "Samantha",
+      "Karen",
+      "Daniel",
+      "Google US English",
+      "Google UK English Female",
+      "Google UK English Male",
+    ];
 
-  for (const name of preferred) {
-    const v = voices.find((x) => x.name === name);
-    if (v) return v;
+    for (const name of preferred) {
+      const v = voices.find((x) => x.name === name);
+      if (v) return v;
+    }
+
+    // Otherwise pick any en-US/en-GB voice
+    return voices.find((v) => v.lang?.startsWith("en-US")) ||
+           voices.find((v) => v.lang?.startsWith("en-GB")) ||
+           voices[0] ||
+           null;
   }
 
-  // Otherwise pick any en-US/en-GB voice
-  return voices.find((v) => v.lang?.startsWith("en-US")) ||
-         voices.find((v) => v.lang?.startsWith("en-GB")) ||
-         voices[0] ||
-         null;
-}
+  async function speakBrowser(text: string) {
+    // Some browsers load voices async
+    const ensureVoices = () =>
+      new Promise<void>((resolve) => {
+        const v = window.speechSynthesis.getVoices();
+        if (v && v.length) return resolve();
+        window.speechSynthesis.onvoiceschanged = () => resolve();
+        setTimeout(() => resolve(), 300);
+      });
 
-async function speakBrowser(text: string) {
-  // Some browsers load voices async
-  const ensureVoices = () =>
-    new Promise<void>((resolve) => {
-      const v = window.speechSynthesis.getVoices();
-      if (v && v.length) return resolve();
-      window.speechSynthesis.onvoiceschanged = () => resolve();
-      setTimeout(() => resolve(), 300);
-    });
+    await ensureVoices();
 
-  await ensureVoices();
+    window.speechSynthesis.cancel(); // stop any previous speech
 
-  window.speechSynthesis.cancel(); // stop any previous speech
+    const u = new SpeechSynthesisUtterance(text);
+    const voice = pickBestVoice();
+    if (voice) u.voice = voice;
 
-  const u = new SpeechSynthesisUtterance(text);
-  const voice = pickBestVoice();
-  if (voice) u.voice = voice;
+    u.rate = 1.04;   // smooth
+    u.pitch = 1.02;  // less robotic
+    u.volume = 1.0;
 
-  u.rate = 1.04;   // smooth
-  u.pitch = 1.02;  // less robotic
-  u.volume = 1.0;
-
-  window.speechSynthesis.speak(u);
-}
+    window.speechSynthesis.speak(u);
+  }
 
   function reportCellsToGeoJSON() {
-  return {
-    type: "FeatureCollection",
-    features: reportCells.map((c) => h3CellToFeature(c.h3_index, c as any)),
-  };
-}
+    return {
+      type: "FeatureCollection",
+      features: reportCells.map((c) => h3CellToFeature(c.h3_index, c as any)),
+    };
+  }
 
   async function playTTS(text: string) {
     const res = await fetch("/api/tts", {
@@ -384,7 +391,7 @@ async function speakBrowser(text: string) {
     try {
       const [camsRes, repRes] = await Promise.all([
         fetch(`/api/cameras?bbox=${encodeURIComponent(bbox)}`),
-        fetch(`/api/report?bbox=${encodeURIComponent(bbox)}`),
+        fetch(`/api/report?bbox=${encodeURIComponent(bbox)}&res=${REPORT_RES}`),
       ]);
   
       // if a newer refresh started, ignore this result
@@ -470,30 +477,38 @@ async function speakBrowser(text: string) {
       })
     );
 
-    // 2. Camera Hexagon Layer
+    // Dynamic Camera Radius based on Zoom Level
+    const cameraRadius =
+      viewState.zoom >= 17 ? 18 :
+      viewState.zoom >= 15 ? 28 :
+      60;
+
+    // 2. Camera Layers
     if (points && points.length > 0) {
       const validPoints = points.filter(p => p.lat != null && p.lon != null);
       
       if (validPoints.length > 0) {
-        mapLayers.push(
-          new HexagonLayer<Pt>({
-            id: "surveillance-hex",
-            data: validPoints,
-            getPosition: (d) => [Number(d.lon), Number(d.lat)],
-            radius: 90,
-            extruded: false,
-            pickable: true,
-            opacity: 0.35,
-            colorRange: [
-              [0, 160, 0],
-              [0, 160, 0],
-              [0, 160, 0],
-              [0, 160, 0],
-              [0, 160, 0],
-              [0, 160, 0],
-            ],
-          })
-        );
+        if (mode === "safety") {
+          mapLayers.push(
+            new HexagonLayer<Pt>({
+              id: "surveillance-hex",
+              data: validPoints,
+              getPosition: (d) => [Number(d.lon), Number(d.lat)],
+              radius: cameraRadius,
+              extruded: false,
+              pickable: true,
+              opacity: 0.35,
+              colorRange: [
+                [0, 160, 0],
+                [0, 160, 0],
+                [0, 160, 0],
+                [0, 160, 0],
+                [0, 160, 0],
+                [0, 160, 0],
+              ],
+            })
+          );
+        }
       }
     }
 
@@ -520,12 +535,24 @@ async function speakBrowser(text: string) {
         filled: true,
         getLineColor: [0, 0, 0, 170],
         getFillColor: (f: any) => {
-          const n = f.properties.report_count || 0;
-          if (n >= 5) return [140, 0, 255, 180]; // Purple for community confirmed
-          if (n >= 2) return [255, 140, 0, 165];
-          if (n >= 1) return [255, 235, 0, 155];
-          return [0, 0, 0, 0];
-        },
+        const yes = f.properties.camera_present_count || 0; // cameras reported
+        const no = f.properties.camera_absent_count || 0;   // no cameras reported
+
+        const conflict = yes > 0 && no > 0;
+        if (conflict) return [255, 0, 255, 160]; // conflict
+
+        // Cameras confirmed
+        if (yes >= 5) return [140, 0, 255, 180];
+        if (yes >= 2) return [255, 140, 0, 165];
+        if (yes >= 1) return [255, 235, 0, 155];
+
+        // Low monitoring warning
+        if (no >= 5) return [255, 0, 0, 190];
+        if (no >= 2) return [255, 60, 60, 150];
+        if (no >= 1) return [255, 120, 120, 120];
+
+        return [0, 0, 0, 0];
+      },
         lineWidthMinPixels: 2,
       })
     );
@@ -546,7 +573,7 @@ async function speakBrowser(text: string) {
     );
 
     return mapLayers;
-  }, [points, reportCells, selected, lastBbox, hasUserLocated]);
+  }, [points, reportCells, selected, lastBbox, hasUserLocated, hovered, viewState.zoom, mode]);
 
   return (
     <div style={{ height: "100vh" }}>
@@ -578,10 +605,17 @@ async function speakBrowser(text: string) {
         <div style={{ marginTop: 12 }}>
           <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>Legend</div>
 
-          <div style={legendRow}>
-            <span style={swatch("rgba(0, 255, 0, 0.45)")} />
-            <span>Green hexes: cameras detected nearby (from OpenStreetMap).</span>
-          </div>
+          {mode === "safety" ? (
+            <div style={legendRow}>
+              <span style={swatch("rgba(0, 255, 0, 0.45)")} />
+              <span>Green hexes: cameras detected nearby (from OpenStreetMap).</span>
+            </div>
+          ) : (
+            <div style={legendRow}>
+              <span style={swatch("rgba(255, 0, 0, 0.8)")} />
+              <span>Red dots: known cameras (from OpenStreetMap).</span>
+            </div>
+          )}
 
           <div style={legendRow}>
             <span style={swatch("rgba(220, 0, 0, 0.14)")} />
@@ -589,18 +623,23 @@ async function speakBrowser(text: string) {
           </div>
 
           <div style={legendRow}>
-            <span style={swatch("rgba(255, 235, 0, 0.55)")} />
-            <span>Yellow cell: 1 community report in this H3 area.</span>
+            <span style={swatch(mode === "privacy" ? "rgba(0, 160, 0, 0.47)" : "rgba(255, 235, 0, 0.55)")} />
+            <span>{mode === "privacy" ? "Light Green cell: 1 report of no cameras." : "Yellow cell: 1 community report in this H3 area."}</span>
           </div>
 
           <div style={legendRow}>
-            <span style={swatch("rgba(255, 140, 0, 0.60)")} />
-            <span>Orange cell: 2 to 4 reports (more confidence).</span>
+            <span style={swatch(mode === "privacy" ? "rgba(0, 180, 0, 0.59)" : "rgba(255, 140, 0, 0.60)")} />
+            <span>{mode === "privacy" ? "Green cell: 2 to 4 reports." : "Orange cell: 2 to 4 reports (more confidence)."}</span>
           </div>
 
           <div style={legendRow}>
-            <span style={swatch("rgba(140, 0, 255, 0.70)")} />
-            <span>Purple cell: 5 or more reports (community confirmed).</span>
+            <span style={swatch(mode === "privacy" ? "rgba(0, 200, 0, 0.75)" : "rgba(140, 0, 255, 0.70)")} />
+            <span>{mode === "privacy" ? "Dark Green cell: 5+ reports (community confirmed)." : "Purple cell: 5 or more reports (community confirmed)."}</span>
+          </div>
+          
+          <div style={legendRow}>
+            <span style={swatch("rgba(255, 0, 255, 0.63)")} />
+            <span>Magenta cell: conflicting reports.</span>
           </div>
 
           <div style={legendRow}>
@@ -625,11 +664,18 @@ async function speakBrowser(text: string) {
               <b>Selected cell:</b> {selected.h3}
             </div>
             
-            {(reportCells.find((c) => c.h3_index === selected.h3)?.report_count || 0) >= 5 && (
-              <div style={{ fontSize: 13, color: "#a855f7", fontWeight: "bold", marginTop: 4 }}>
-                ✓ Community confirmed
-              </div>
-            )}
+            {(() => {
+               const cellData = reportCells.find((c) => c.h3_index === selected.report_h3);
+               const totalCount = Math.max(cellData?.camera_present_count || 0, cellData?.camera_absent_count || 0);
+               if (totalCount >= 5) {
+                 return (
+                  <div style={{ fontSize: 13, color: "#a855f7", fontWeight: "bold", marginTop: 4 }}>
+                    ✓ Community confirmed
+                  </div>
+                 );
+               }
+               return null;
+            })()}
 
             <textarea
               value={reportText}
@@ -646,7 +692,24 @@ async function speakBrowser(text: string) {
                 color: "white",
                 outline: "none",
               }}
+
+              
             />
+
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button
+                style={btn(claim === "camera_present")}
+                onClick={() => setClaim("camera_present")}
+              >
+                Camera here
+              </button>
+              <button
+                style={btn(claim === "camera_absent")}
+                onClick={() => setClaim("camera_absent")}
+              >
+                No camera seen
+              </button>
+            </div>
 
             <div style={{ marginTop: 8 }}>
               <input
@@ -701,13 +764,13 @@ async function speakBrowser(text: string) {
                       method: "POST",
                       headers: { "content-type": "application/json" },
                       body: JSON.stringify({
-                        h3_index: selected.h3,
-                        lat: selected.lat,
-                        lon: selected.lon,
-                        mode,
-                        user_text: text,
-                        signage_image_base64: proofImage,
-                      }),
+                      h3_index: selected.report_h3,
+                      lat: selected.lat,
+                      lon: selected.lon,
+                      claim,
+                      user_text: text,
+                      signage_image_base64: proofImage,
+                    }),
                     });
 
                     const payload = await res.json().catch(() => ({}));
@@ -718,14 +781,16 @@ async function speakBrowser(text: string) {
 
                     // Optimistic update so it works on first click visually
                     setReportCells((prev) => {
-                      const idx = prev.findIndex((c) => c.h3_index === selected.h3);
+                      const idx = prev.findIndex((c) => c.h3_index === selected.report_h3);
+                      const isNoCam = claim === "camera_absent";
                       const signageInc = payload?.signage_text ? 1 : 0;
 
                       if (idx >= 0) {
                         const next = [...prev];
                         next[idx] = {
                           ...next[idx],
-                          report_count: (next[idx].report_count || 0) + 1,
+                          camera_present_count: (next[idx].camera_present_count || 0) + (isNoCam ? 0 : 1),
+                          camera_absent_count: (next[idx].camera_absent_count || 0) + (isNoCam ? 1 : 0),
                           signage_count: (next[idx].signage_count || 0) + signageInc,
                           summary: payload?.summary ?? next[idx].summary,
                           signage_text: payload?.signage_text ?? next[idx].signage_text,
@@ -736,8 +801,9 @@ async function speakBrowser(text: string) {
                       return [
                         ...prev,
                         {
-                          h3_index: selected.h3,
-                          report_count: 1,
+                          h3_index: selected.report_h3,
+                          camera_present_count: isNoCam ? 0 : 1,
+                          camera_absent_count: isNoCam ? 1 : 0,
                           signage_count: signageInc,
                           summary: payload?.summary,
                           signage_text: payload?.signage_text,
@@ -767,13 +833,14 @@ async function speakBrowser(text: string) {
                   try {
                     setLastError(null);
 
-                    const cell = reportCells.find((c) => c.h3_index === selected.h3);
+                    const cell = reportCells.find((c) => c.h3_index === selected.report_h3);
                     
-                    // NEW: Retrieve actual camera data for this specific H3 hex and its neighbors
-                    const { inCell, nearby } = getCameraCountsForH3(points, selected.h3, 1);
+                    // Retrieve actual camera data for this specific H3 hex and its neighbors
+                    const { inCell, nearby } = getCameraCountsForH3(points, selected.report_h3, 1);
 
                     const ttsText = buildDetailedTtsText({
-                      reportCount: cell?.report_count || 0,
+                      // Treat sum of positive and negative reports as the total reportCount for TTS
+                      reportCount: (cell?.camera_present_count || 0) + (cell?.camera_absent_count || 0),
                       signageCount: cell?.signage_count || 0,
                       camerasInCell: inCell,
                       camerasNearby: nearby,
@@ -814,19 +881,28 @@ async function speakBrowser(text: string) {
         layers={layers}
         onViewStateChange={({ viewState }) => setViewState(viewState as any)}
         onHover={(info: any) => {
-        const coord = info?.coordinate;
-        if (!coord) return;
-        const [lon, lat] = coord as [number, number];
-        const h3 = latLngToCell(lat, lon, H3_RES);
-        setHovered({ lat, lon, h3 });
-      }}
-      onClick={(info: any) => {
-        const coord = info?.coordinate;
-        if (!coord) return;
-        const [lon, lat] = coord as [number, number];
-        const h3 = latLngToCell(lat, lon, H3_RES);
-        setSelected({ lat, lon, h3 });
-      }}
+          const coord = info?.coordinate;
+          if (!coord) return;
+
+          const [lon, lat] = coord as [number, number];
+          const h3Pick = latLngToCell(lat, lon, PICK_RES);
+          const h3Report = h3Pick; // same res now
+
+          const [centerLat, centerLon] = cellToLatLng(h3Pick);
+          setHovered({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Report });
+        }}
+        onClick={(info: any) => {
+          const coord = info?.coordinate;
+          if (!coord) return;
+
+          const [lon, lat] = coord as [number, number];
+
+          const h3Pick = latLngToCell(lat, lon, PICK_RES);
+          const h3Report = h3Pick;
+
+          const [centerLat, centerLon] = cellToLatLng(h3Pick);
+          setSelected({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Report });
+        }}
       >
         <Map
           ref={mapRef}

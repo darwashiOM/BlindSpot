@@ -3,8 +3,11 @@ import { z } from "zod";
 import { Pool } from "pg";
 import { ai } from "@/lib/gemini";
 import { LRUCache } from "lru-cache";
+import { latLngToCell } from "h3-js";
 
 export const runtime = "nodejs";
+
+const CANONICAL_RES = 12;
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -12,13 +15,10 @@ const pool = new Pool({
 });
 
 const postSchema = z.object({
-  h3_index: z.string().min(5),
   lat: z.number(),
   lon: z.number(),
-  mode: z.enum(["privacy", "safety"]),
+  claim: z.enum(["camera_present", "camera_absent"]),
   user_text: z.string().min(3).max(500),
-
-  // Now required for proof
   signage_image_base64: z.string().min(50),
 });
 
@@ -103,7 +103,6 @@ out tags 25;
     return publicHit;
   }
 
-  // If Overpass is down, do not block submissions, just allow
   publicCache.set(key, true);
   return true;
 }
@@ -123,7 +122,8 @@ export async function GET(req: Request) {
       `
       select
         h3_index,
-        count(*)::int as report_count,
+        sum(case when claim = 'camera_present' then 1 else 0 end)::int as camera_present_count,
+        sum(case when claim = 'camera_absent' then 1 else 0 end)::int as camera_absent_count,
         sum(case when signage_text is not null and signage_text <> '' then 1 else 0 end)::int as signage_count
       from reports
       where is_allowed = true
@@ -149,13 +149,13 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
     const parsed = postSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json({ error: "Bad input" }, { status: 400 });
-    }
+    if (!parsed.success) return NextResponse.json({ error: "Bad input" }, { status: 400 });
 
-    const { h3_index, lat, lon, mode, user_text, signage_image_base64 } = parsed.data;
+    const { lat, lon, claim, user_text, signage_image_base64 } = parsed.data;
+    const mode: "safety" = "safety";
+   
 
-    // Size guard so people cannot send huge images
+    // size guard
     const base64Part = signage_image_base64.includes(",")
       ? signage_image_base64.split(",", 2)[1]
       : signage_image_base64;
@@ -165,7 +165,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Image too large. Use a smaller photo." }, { status: 413 });
     }
 
-    // 1. Verify it's a public place before spending AI tokens
+    // public place check
     const publicOk = await isPublicPlace(lat, lon);
     if (!publicOk) {
       return NextResponse.json(
@@ -174,97 +174,128 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2. Gemini text moderation
+    // Always compute h3 on the server
+    const h3_index = latLngToCell(lat, lon, CANONICAL_RES);
+
+    // Gemini text moderation
     const promptText =
-      `You are moderating and structuring a map report about "how monitored a place feels".\n` +
+      `You are moderating and structuring a community map report.\n` +
       `Return ONLY valid JSON with this exact shape:\n` +
       `{"is_allowed": boolean, "tags": string[], "summary": string}\n` +
       `Rules:\n` +
       `- Block if it tries to help wrongdoing, evasion, stalking, or targeting people.\n` +
       `- Otherwise allow.\n` +
-      `- tags should be short and useful: indoor, outdoor, entrance, parking, signage_present, crowded, quiet.\n\n` +
+      `- tags: indoor, outdoor, entrance, parking, signage_present, crowded, quiet.\n\n` +
+      `Mode: ${mode}\n` +
+      `Claim: ${claim}\n` +
       `Report text: ${user_text}`;
 
     const moderation = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: promptText,
-      config: {
-        responseMimeType: "application/json",
-      },
+      config: { responseMimeType: "application/json" },
     });
 
     const aiText = (moderation.text ?? "").trim();
     if (!aiText) throw new Error("Gemini returned empty response");
-
     const aiJson = JSON.parse(aiText);
 
     if (!aiJson.is_allowed) {
       return NextResponse.json({ error: "Report not allowed" }, { status: 403 });
     }
 
-    // 3. Optional signage extraction and proof verification (vision)
+    // Vision analysis
     let signageText: string | null = null;
-    let autoTags: string[] = []; // Lifted to correctly merge tags
+    let autoTags: string[] = [];
 
-    if (signage_image_base64) {
-      let mimeType = "image/jpeg";
-      let data = signage_image_base64;
+    let mimeType = "image/jpeg";
+    let data = signage_image_base64;
 
-      if (data.includes(",")) {
-        const [meta, b64] = data.split(",", 2);
-        data = b64;
-        const m = meta.match(/data:(.*?);base64/i);
-        if (m?.[1]) mimeType = m[1];
-      }
-
-      const vision = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          { inlineData: { mimeType, data } },
-          {
-            text:
-              `Analyze the photo as proof for a public safety/privacy report.\n` +
-              `Return ONLY JSON with this exact shape:\n` +
-              `{"proof_ok": boolean, "public_place": boolean, "contains_camera": boolean, "contains_signage": boolean, "signage_text": string|null}\n` +
-              `Rules:\n` +
-              `- proof_ok is true only if the image clearly relates to monitoring (camera visible, surveillance sign, CCTV sign, or obvious monitoring setup).\n` +
-              `- public_place true if it looks like a public space (street, campus walkway, store entrance, parking lot, etc).\n` +
-              `- signage_text should include any readable CCTV/recording policy text, else null.\n`,
-          },
-        ],
-        config: { responseMimeType: "application/json" },
-      });
-
-      const vText = (vision.text ?? "").trim();
-      if (!vText) throw new Error("Gemini returned empty image analysis");
-      const vJson = JSON.parse(vText);
-
-      // hard rules
-      if (!vJson.proof_ok) {
-        return NextResponse.json({ error: "Proof photo does not show monitoring evidence." }, { status: 400 });
-      }
-      if (!vJson.public_place) {
-        return NextResponse.json({ error: "Only public places are allowed." }, { status: 403 });
-      }
-
-      signageText = vJson.signage_text || null;
-
-      // add tags automatically
-      if (vJson.contains_camera) autoTags.push("camera_visible");
-      if (vJson.contains_signage) autoTags.push("signage_present");
+    if (data.includes(",")) {
+      const [meta, b64] = data.split(",", 2);
+      data = b64;
+      const m = meta.match(/data:(.*?);base64/i);
+      if (m?.[1]) mimeType = m[1];
     }
 
-    // Merge text tags with vision tags, avoiding duplicates
+    const vision = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [
+        { inlineData: { mimeType, data } },
+        {
+          text:
+            `Analyze the photo as proof for a community report.\n` +
+            `Return ONLY JSON with this exact shape:\n` +
+            `{"public_place": boolean, "scene_clear": boolean, "contains_camera": boolean, "contains_signage": boolean, "signage_text": string|null}\n` +
+            `Rules:\n` +
+            `- public_place true if it looks like a public space.\n` +
+            `- scene_clear true if the photo is not too dark/blurry and shows the area context.\n` +
+            `- contains_camera true if a camera is visible.\n` +
+            `- contains_signage true if CCTV/recording signage is visible.\n` +
+            `- signage_text should include readable text if present.\n`,
+        },
+      ],
+      config: { responseMimeType: "application/json" },
+    });
+
+    const vText = (vision.text ?? "").trim();
+    if (!vText) throw new Error("Gemini returned empty image analysis");
+    const vJson = JSON.parse(vText);
+
+    // Hard rules for proof depending on claim
+    if (!vJson.public_place) {
+      return NextResponse.json({ error: "Only public places are allowed." }, { status: 403 });
+    }
+    if (!vJson.scene_clear) {
+      return NextResponse.json({ error: "Photo is too unclear. Retake it with more context." }, { status: 400 });
+    }
+
+    if (claim === "camera_present") {
+      if (!vJson.contains_camera && !vJson.contains_signage) {
+        return NextResponse.json(
+          { error: "Safety reports need a photo showing a camera or surveillance signage." },
+          { status: 400 }
+        );
+      }
+    } else {
+      // camera_absent
+      if (vJson.contains_camera) {
+        return NextResponse.json(
+          { error: "Privacy reports should show an area with no visible camera in the photo." },
+          { status: 400 }
+        );
+      }
+    }
+
+    signageText = vJson.signage_text || null;
+
+    if (vJson.contains_camera) autoTags.push("camera_visible");
+    if (vJson.contains_signage) autoTags.push("signage_present");
+
     const mergedTags = Array.from(new Set([...(aiJson.tags || []), ...autoTags]));
 
     await pool.query(
-      `insert into reports (h3_index, lat, lon, mode, user_text, tags, is_allowed, signage_text)
-       values ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [h3_index, lat, lon, mode, user_text, JSON.stringify(mergedTags), true, signageText]
+      `insert into reports (h3_index, lat, lon, mode, claim, user_text, tags, is_allowed, signage_text, summary, proof_image_base64)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        h3_index,
+        lat,
+        lon,
+        mode,
+        claim,
+        user_text,
+        JSON.stringify(mergedTags),
+        true,
+        signageText,
+        aiJson.summary ?? null,
+        signage_image_base64, // storing proof for now
+      ]
     );
 
     return NextResponse.json({
       ok: true,
+      h3_index,
+      claim,
       tags: mergedTags,
       summary: aiJson.summary,
       signage_text: signageText,
