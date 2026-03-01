@@ -91,8 +91,8 @@ function getNearbyReportStatsForTts(
   let no = 0;
   let signage = 0;
 
-  // pick the "best" summary among nearby cells (the one with most evidence)
   let bestSummary: string | null = null;
+  let bestSignageText: string | null = null;
   let bestWeight = -1;
 
   let matchedCells = 0;
@@ -111,13 +111,15 @@ function getNearbyReportStatsForTts(
     signage += cs;
 
     const weight = cy + cn + cs;
-    if (c.summary && weight > bestWeight) {
+
+    if (weight > bestWeight) {
       bestWeight = weight;
-      bestSummary = c.summary;
+      bestSummary = c.summary || null;
+      bestSignageText = c.signage_text || null;
     }
   }
 
-  return { yes, no, signage, bestSummary, matchedCells };
+  return { yes, no, signage, bestSummary, bestSignageText, matchedCells };
 }
 
 function kindLabel(k: PlaceKind) {
@@ -199,8 +201,43 @@ export default function Home() {
   const recAbortRef = useRef<AbortController | null>(null);
   const recSeq = useRef(0);
 
+  type ReviewsResp = {
+  yes?: number;
+  no?: number;
+  matchedCells?: number;
+  signage?: number;
+  summary?: string;
+  signage_text?: string;
+  notes?: Array<{ claim?: string; text?: string; created_at?: string }>;
+};
+
+const [selectedRec, setSelectedRec] = useState<RecommendItem | null>(null);
+const [reviewsLoading, setReviewsLoading] = useState(false);
+const [reviewsData, setReviewsData] = useState<ReviewsResp | null>(null);
+const reviewsBoxRef = useRef<HTMLDivElement | null>(null);
+
+  const voiceActiveRef = useRef(false);
+  const voicePhaseRef = useRef<"idle" | "ask" | "command">("idle");
+  const ttsPlayingRef = useRef(false);
+
   const didAutoStartRef = useRef(false);
 
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+const speechRef = useRef<any>(null);
+
+const recListRef = useRef<RecommendItem[]>([]);
+
+const [voiceActive, setVoiceActive] = useState(false);
+const [voiceListening, setVoiceListening] = useState(false);
+const [voicePhase, setVoicePhase] = useState<"idle" | "ask" | "command">("idle");
+
+React.useEffect(() => {
+    voiceActiveRef.current = voiceActive;
+  }, [voiceActive]);
+
+  React.useEffect(() => {
+    voicePhaseRef.current = voicePhase;
+  }, [voicePhase]);
 
   const [isMobile, setIsMobile] = useState(false);
 const [panelOpen, setPanelOpen] = useState(true);
@@ -283,7 +320,7 @@ React.useEffect(() => {
   const [lastError, setLastError] = useState<string | null>(null);
 
   // New Recommender UI State
-  const [askText, setAskText] = useState("Selling something on Facebook Marketplace");
+  const [askText, setAskText] = useState("");
   const [recommending, setRecommending] = useState(false);
   const [recIntentLabel, setRecIntentLabel] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState<RecommendItem[]>([]);
@@ -332,6 +369,54 @@ React.useEffect(() => {
     border: "1px solid rgba(255,255,255,0.18)",
     flex: "0 0 auto",
   });
+
+  async function loadReviewsForLatLon(lat: number, lon: number) {
+  try {
+    setReviewsLoading(true);
+    setLastError(null);
+
+    const centerH3 = latLngToCell(lat, lon, reportRes);
+
+    const stats = getNearbyReportStatsForTts(reportCells, centerH3, READ_REPORT_K);
+
+    setReviewsData({
+      yes: stats.yes,
+      no: stats.no,
+      matchedCells: stats.matchedCells,
+      signage: stats.signage,
+      summary: stats.bestSummary || undefined,
+      signage_text: stats.bestSignageText || undefined,
+      notes: [], // keep empty for now
+    });
+
+    window.setTimeout(() => {
+      reviewsBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+  } catch (e: any) {
+    setReviewsData(null);
+    setLastError(String(e?.message || e));
+  } finally {
+    setReviewsLoading(false);
+  }
+}
+
+async function chooseRecommendation(r: RecommendItem) {
+  setPanelOpen(true);
+  setSelectedRec(r);
+
+  // Fly first (so user sees where it is)
+  setViewState((v) => ({
+    ...v,
+    latitude: r.place.lat,
+    longitude: r.place.lon,
+    zoom: Math.max(v.zoom, 13),
+    transitionDuration: 900,
+    transitionInterpolator: new FlyToInterpolator(),
+  }));
+
+  // Load reviews and show them
+  await loadReviewsForLatLon(r.place.lat, r.place.lon);
+}
 
   async function loadPlacesSequentially(opts: { bbox: string; enabledKinds: PlaceKind[]; signal: AbortSignal; seq: number }) {
     const { bbox, enabledKinds, signal, seq } = opts;
@@ -412,17 +497,18 @@ function buildTtsSummaryText(opts: {
 }
 
   async function speakBrowser(text: string) {
-    const ensureVoices = () =>
-      new Promise<void>((resolve) => {
-        const v = window.speechSynthesis.getVoices();
-        if (v && v.length) return resolve();
-        window.speechSynthesis.onvoiceschanged = () => resolve();
-        setTimeout(() => resolve(), 300);
-      });
+  const ensureVoices = () =>
+    new Promise<void>((resolve) => {
+      const v = window.speechSynthesis.getVoices();
+      if (v && v.length) return resolve();
+      window.speechSynthesis.onvoiceschanged = () => resolve();
+      setTimeout(() => resolve(), 300);
+    });
 
-    await ensureVoices();
-    window.speechSynthesis.cancel();
+  await ensureVoices();
+  window.speechSynthesis.cancel();
 
+  return await new Promise<void>((resolve) => {
     const u = new SpeechSynthesisUtterance(text);
     const voice = pickBestVoice();
     if (voice) u.voice = voice;
@@ -431,31 +517,70 @@ function buildTtsSummaryText(opts: {
     u.pitch = 1.02;
     u.volume = 1.0;
 
+    u.onend = () => resolve();
+    u.onerror = () => resolve();
+
     window.speechSynthesis.speak(u);
+  });
+}
+
+async function playTTS(text: string) {
+  ttsPlayingRef.current = true;
+  stopSpeech();
+  // stop any previous audio
+  if (audioRef.current) {
+    try {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    } catch {}
+    audioRef.current = null;
   }
 
-  async function playTTS(text: string) {
-    const res = await fetch("/api/tts", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
+  const res = await fetch("/api/tts", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+
+  if (res.ok) {
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    const a = new Audio(url);
+    audioRef.current = a;
+
+    ttsPlayingRef.current = true;
+
+    // wait until it finishes (or errors)
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        try {
+          ttsPlayingRef.current = false;
+          URL.revokeObjectURL(url);
+        } catch {}
+        resolve();
+      };
+
+      a.onended = done;
+      a.onerror = done;
+
+      a.play().catch(done);
     });
 
-    if (res.ok) {
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      new Audio(url).play();
-      return;
-    }
-
-    const err = await res.json().catch(() => ({}));
-    if (res.status === 429 && err?.code === "quota_exceeded") {
-      await speakBrowser(text);
-      return;
-    }
-
-    throw new Error(err?.error || "TTS failed");
+    return;
   }
+
+  const err = await res.json().catch(() => ({}));
+  if (res.status === 429 && err?.code === "quota_exceeded") {
+  ttsPlayingRef.current = true;
+  await speakBrowser(text);
+  ttsPlayingRef.current = false;
+  return;
+}
+
+  ttsPlayingRef.current = false;
+  throw new Error(err?.error || "TTS failed");
+}
 
   function scheduleRefresh(delayMs = 250) {
     if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
@@ -561,8 +686,110 @@ function buildTtsSummaryText(opts: {
     }
   }
 
-  async function runRecommend() {
-    const mySeq = ++recSeq.current;
+  function getSpeechCtor(): any {
+  return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null;
+}
+
+function stopSpeech() {
+  try {
+    speechRef.current?.stop?.();
+  } catch {}
+  speechRef.current = null;
+  setVoiceListening(false);
+}
+
+function stopVoiceAll() {
+  stopSpeech();
+  setVoiceActive(false);
+  setVoicePhase("idle");
+
+  if (audioRef.current) {
+    try {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    } catch {}
+    audioRef.current = null;
+  }
+}
+
+function startListenOnce(opts: { onFinal: (text: string) => void; onError?: (msg: string) => void; keepAlive?: boolean }) {  const SR = getSpeechCtor();
+  if (!SR) {
+    setLastError("Speech recognition not supported in this browser.");
+    return;
+  }
+
+  stopSpeech();
+
+  const rec = new SR();
+  speechRef.current = rec;
+
+  rec.lang = "en-US";
+  rec.interimResults = false;
+  rec.continuous = false;
+
+  setVoiceListening(true);
+  setLastError(null);
+
+  rec.onresult = (event: any) => {
+    const t = String(event?.results?.[0]?.[0]?.transcript || "").trim();
+    if (t) opts.onFinal(t);
+  };
+
+  rec.onerror = (e: any) => {
+    const msg = String(e?.error || "voice_error");
+    setVoiceListening(false);
+    opts.onError?.(msg);
+  };
+
+  rec.onend = () => {
+  setVoiceListening(false);
+
+  // Keep listening in command mode until the user answers,
+  // but never restart while TTS is playing.
+  const shouldKeep =
+    Boolean(opts.keepAlive) &&
+    voiceActiveRef.current &&
+    voicePhaseRef.current === "command" &&
+    !ttsPlayingRef.current;
+
+  if (shouldKeep) {
+    window.setTimeout(() => {
+      // re-check in case something changed
+      const stillOk =
+        voiceActiveRef.current &&
+        voicePhaseRef.current === "command" &&
+        !ttsPlayingRef.current;
+
+      if (stillOk) startListenOnce(opts);
+    }, 250);
+  }
+};
+
+  rec.start();
+}
+
+function parsePickIndex(text: string) {
+  const t = text.toLowerCase();
+
+  const m = t.match(/\b(option|pick|choose|go to|fly to)\s*(\d)\b/);
+  if (m?.[2]) return Number(m[2]);
+
+  if (/\b(first|one)\b/.test(t)) return 1;
+  if (/\b(second|two|too|to)\b/.test(t)) return 2;
+  if (/\b(third|three)\b/.test(t)) return 3;
+  if (/\b(fourth|four)\b/.test(t)) return 4;
+  if (/\b(fifth|five)\b/.test(t)) return 5;
+
+  return null;
+}
+
+  async function runRecommend(overrideText?: string, opts?: { autoSpeak?: boolean }) {
+    const mySeq = ++recSeq.current
+    
+    const textValue =
+  typeof overrideText === "string"
+    ? overrideText
+    : askText;
 
     // cancel any previous recommend call
     recAbortRef.current?.abort();
@@ -583,7 +810,7 @@ function buildTtsSummaryText(opts: {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          text: askText,
+          text: textValue,
           lat,
           lon,
           maxResults: 30, // ask for more, so filtering still leaves enough
@@ -606,7 +833,15 @@ function buildTtsSummaryText(opts: {
       const raw = Array.isArray(json?.results) ? json.results : [];
       const filtered = raw.filter((r: RecommendItem) => kindEnabled[r.place.kind]);
 
-      setRecommendations(filtered.slice(0, 5));
+      const top = filtered.slice(0, 5);
+      recListRef.current = top;
+      setRecommendations(top);
+
+      if (opts?.autoSpeak) {
+        window.setTimeout(() => {
+          speakTopRecommendations(top).catch(() => {});
+        }, 200);
+      }
     } catch (e: any) {
       // key part: ignore aborts
       if (e?.name === "AbortError" || String(e?.message || "").toLowerCase().includes("aborted")) {
@@ -622,6 +857,127 @@ function buildTtsSummaryText(opts: {
       if (mySeq === recSeq.current) setRecommending(false);
     }
   }
+
+  async function speakTopRecommendations(list?: RecommendItem[]) {
+  const items = list ?? recommendations;
+  if (!items.length) return;
+
+  const top3 = items.slice(0, 3);
+
+  const lines = top3.map((r, i) => {
+    const name = r.place.name || kindLabel(r.place.kind);
+    const dist = Math.round(r.distance_m);
+    return `Option ${i + 1}: ${name}, about ${dist} meters away.`;
+  });
+
+  setVoicePhase("command");
+await playTTS(`${lines.join(" ")} Say option 1, option 2, option 3, repeat, new request, or stop.`);
+listenForCommand();
+}
+
+async function speakReviewsForPlace(item: RecommendItem) {
+  // Make sure UI shows the reviews box too
+  setSelectedRec(item);
+  await loadReviewsForLatLon(item.place.lat, item.place.lon);
+
+  const centerH3 = latLngToCell(item.place.lat, item.place.lon, reportRes);
+  const stats = getNearbyReportStatsForTts(reportCells, centerH3, READ_REPORT_K);
+
+  const text = buildTtsSummaryText({
+    reportSummary: stats.bestSummary,
+    reportYes: stats.yes,
+    reportNo: stats.no,
+    matchedCells: stats.matchedCells,
+    camerasInCell: item.cameras_in_cell,
+    camerasNearby: item.cameras_in_k1,
+  });
+
+  await playTTS(text);
+}
+
+function flyToRecommendation(idx1based: number) {
+  const i = idx1based - 1;
+  const r = recommendations[i];
+  if (!r) return;
+
+  setViewState((v) => ({
+    ...v,
+    latitude: r.place.lat,
+    longitude: r.place.lon,
+    zoom: Math.max(v.zoom, 13),
+    transitionDuration: 900,
+    transitionInterpolator: new FlyToInterpolator(),
+  }));
+}
+
+function listenForAsk() {
+  setVoicePhase("ask");
+  startListenOnce({
+    onFinal: async (t) => {
+      setAskText(t);
+      setPanelOpen(true);
+      await runRecommend(t, { autoSpeak: true });
+    },
+    onError: async () => {
+      setLastError("Voice input failed. Try again.");
+      setVoiceActive(false);
+      setVoicePhase("idle");
+    },
+  });
+}
+
+function listenForCommand() {
+  startListenOnce({
+    keepAlive: true,
+    onFinal: async (t) => {
+      const low = t.toLowerCase();
+      const list = recListRef.current;
+
+      if (low.includes("stop") || low.includes("cancel") || low.includes("exit")) {
+        stopVoiceAll();
+        return;
+      }
+
+      if (low.includes("repeat")) {
+        await speakTopRecommendations(list);
+        return;
+      }
+
+      if (low.includes("new request") || low.includes("another") || low.includes("different")) {
+        setVoicePhase("ask");
+        await playTTS("Say your new request.");
+        listenForAsk();
+        return;
+      }
+
+      const idx = parsePickIndex(t);
+      if (idx && list[idx - 1]) {
+        const picked = list[idx - 1];
+
+        // fly to the chosen one
+        setViewState((v) => ({
+          ...v,
+          latitude: picked.place.lat,
+          longitude: picked.place.lon,
+          zoom: Math.max(v.zoom, 13),
+          transitionDuration: 900,
+          transitionInterpolator: new FlyToInterpolator(),
+        }));
+
+        await speakReviewsForPlace(picked);
+        listenForCommand();
+        return;
+      }
+
+      await playTTS("I did not catch that. Say option 1, option 2, option 3, repeat, new request, or stop.");
+      listenForCommand();
+    },
+    onError: async () => {
+      await playTTS("Voice input failed. Say repeat, new request, or stop.");
+      listenForCommand();
+    },
+  });
+}
 
   // Memoize heavy GeoJSON
   const reportGeo = useMemo(() => {
@@ -807,6 +1163,22 @@ if (showCommunityReports) {
             {panelOpen ? "Hide panel" : "Open panel"}
           </button>
 
+<button
+  className={`${styles.btn} ${voiceActive ? styles.btnDanger : styles.btnPrimary}`}
+  onClick={async () => {
+    if (voiceActive) {
+      stopVoiceAll();
+      return;
+    }
+
+    setVoiceActive(true);
+    setPanelOpen(true);
+    await playTTS("Say what you want to do. For example: going to study.");
+    listenForAsk();
+  }}
+>
+  {voiceActive ? (voiceListening ? "Stop (listening)" : "Stop voice") : "🎙️ Voice"}
+</button>
           <button className={styles.btn} onClick={refresh}>
             {loading ? "Loading..." : "Refresh"}
           </button>
@@ -836,7 +1208,14 @@ if (showCommunityReports) {
           <input
             value={askText}
             onChange={(e) => setAskText(e.target.value)}
-            placeholder="Example: Selling something on Facebook Marketplace"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                setPanelOpen(true);
+                runRecommend();
+              }
+            }}
+            placeholder=""
             style={{
               width: "100%",
               padding: "10px 10px",
@@ -849,7 +1228,7 @@ if (showCommunityReports) {
             }}
           />
           <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-            <button style={btn(false)} onClick={runRecommend} disabled={recommending}>
+            <button style={btn(false)} onClick={() => runRecommend()} disabled={recommending}>
               {recommending ? "Thinking..." : "Suggest spots"}
             </button>
             <button
@@ -900,19 +1279,9 @@ if (showCommunityReports) {
                     <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                       <button
                         style={btn(false)}
-                        onClick={() => {
-                          setViewState((v) => ({
-                            ...v,
-                            latitude: r.place.lat,
-                            longitude: r.place.lon,
-                            zoom: Math.max(v.zoom, 12),
-                            transitionDuration: 900,
-                            transitionInterpolator: new FlyToInterpolator(),
-                          }));
-                          if (isMobile) setPanelOpen(false); // Auto-close panel on mobile when flying
-                        }}
+                        onClick={() => chooseRecommendation(r)}
                       >
-                        Fly to
+                        Choose
                       </button>
                     </div>
                   </div>
@@ -921,6 +1290,102 @@ if (showCommunityReports) {
             </div>
           )}
         </div>
+
+        {selectedRec && (
+  <div
+    ref={reviewsBoxRef}
+    style={{
+      marginTop: 14,
+      padding: 12,
+      borderRadius: 14,
+      border: "1px solid rgba(255,255,255,0.12)",
+      background: "rgba(255,255,255,0.05)",
+    }}
+  >
+    <div style={{ fontWeight: 900, fontSize: 13 }}>
+      Reviews for{" "}
+      {(selectedRec.place.name || kindLabel(selectedRec.place.kind))}{" "}
+      <span style={{ opacity: 0.7, fontWeight: 700 }}>
+        ({Math.round(selectedRec.distance_m)}m)
+      </span>
+    </div>
+
+    <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
+      {reviewsLoading && "Loading reviews..."}
+    </div>
+
+    {!reviewsLoading && reviewsData && (
+      <>
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.9 }}>
+          <b>Reports:</b> {Number(reviewsData.yes || 0)} saw cameras,{" "}
+          {Number(reviewsData.no || 0)} saw no cameras
+          {typeof reviewsData.matchedCells === "number" ? (
+            <> • matched cells: {reviewsData.matchedCells}</>
+          ) : null}
+        </div>
+
+        {reviewsData.summary ? (
+          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.9 }}>
+            <b>Summary:</b> {reviewsData.summary}
+          </div>
+        ) : null}
+
+        {reviewsData.signage_text ? (
+          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.9 }}>
+            <b>Signage:</b> {reviewsData.signage_text}
+          </div>
+        ) : null}
+
+
+        {(Array.isArray(reviewsData.notes) && reviewsData.notes.length > 0) ? (
+          <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 8 }}>
+            {reviewsData.notes.slice(0, 8).map((n, idx) => (
+              <div
+                key={idx}
+                style={{
+                  padding: 10,
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(0,0,0,0.15)",
+                  fontSize: 12,
+                  lineHeight: 1.35,
+                }}
+              >
+                <div style={{ fontWeight: 800, marginBottom: 4, opacity: 0.9 }}>
+                  {n.claim === "camera_present" ? "Camera here" : n.claim === "camera_absent" ? "No camera seen" : "Report"}
+                </div>
+                <div style={{ opacity: 0.9 }}>{String(n.text || "").trim() || "(no text)"}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+          </div>
+        )}
+      </>
+    )}
+
+    <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+      <button
+        style={btn(false)}
+        disabled={reviewsLoading}
+        onClick={() => loadReviewsForLatLon(selectedRec.place.lat, selectedRec.place.lon)}
+      >
+        {reviewsLoading ? "Loading..." : "Refresh reviews"}
+      </button>
+
+      <button
+        style={btn(false)}
+        onClick={() => {
+          setSelectedRec(null);
+          setReviewsData(null);
+        }}
+      >
+        Clear reviews
+      </button>
+    </div>
+  </div>
+)}
 
         <div style={{ marginTop: 14 }}>
           <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Place filters</div>
@@ -1147,6 +1612,8 @@ if (showCommunityReports) {
         >
           <Map
             ref={mapRef}
+            mapLib={maplibregl}
+            reuseMaps
             {...viewState}
             pixelRatio={1}
             mapStyle={`https://api.maptiler.com/maps/streets-v2/style.json?key=${process.env.NEXT_PUBLIC_MAPTILER_KEY}`}
@@ -1154,11 +1621,13 @@ if (showCommunityReports) {
               const map = mapRef.current?.getMap();
               if (map) {
                 map.on("styleimagemissing", (e: any) => {
-                  try {
-                    const img = new ImageData(1, 1);
-                    map.addImage(e.id, img as any);
-                  } catch {}
-                });
+                    const id = String(e?.id || "");
+                    if (!id) return;
+                    if (map.hasImage(id)) return;
+
+                    const data = new Uint8Array(4); // transparent RGBA
+                    map.addImage(id, { width: 1, height: 1, data });
+                  });
               }
 
               if (!didAutoStartRef.current) {
