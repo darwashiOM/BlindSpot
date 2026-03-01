@@ -6,6 +6,7 @@ import maplibregl from "maplibre-gl";
 import DeckGL from "@deck.gl/react";
 import { GeoJsonLayer } from "@deck.gl/layers";
 import { cellToBoundary, cellToLatLng } from "h3-js";
+import type { Color } from "@deck.gl/core";
 
 type TrendRow = {
   DAY: string;
@@ -66,15 +67,18 @@ function h3ToFeature(h3: string, props: Record<string, any>) {
   };
 }
 
-function tierColor(tier: string, conflict: boolean) {
-  if (conflict) return [255, 0, 255, 150];
+const DEFAULT_FILL: Color = [180, 180, 180, 90];
+const CONFLICT_FILL: Color = [255, 120, 0, 170];
 
-  if (tier === "confirmed") return [140, 0, 255, 170];
-  if (tier === "some_confirmation") return [255, 140, 0, 150];
-  if (tier === "single_report") return [255, 235, 0, 140];
-  if (tier === "reports_no_cameras") return [255, 80, 80, 150];
+const TIER_TO_COLOR: Record<string, Color> = {
+  low: [102, 155, 188, 120],
+  mid: [253, 240, 213, 120],
+  high: [193, 18, 31, 120],
+};
 
-  return [0, 0, 0, 0];
+function tierColor(tier: string, conflict: boolean): Color {
+  if (conflict) return CONFLICT_FILL;
+  return TIER_TO_COLOR[tier] ?? DEFAULT_FILL;
 }
 
 function TrendChart({ rows }: { rows: TrendRow[] }) {
