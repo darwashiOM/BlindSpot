@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useRef, useState } from "react";
-import Map, { NavigationControl, MapRef } from "react-map-gl/maplibre";
+import MapGL, { NavigationControl, MapRef } from "react-map-gl/maplibre";
 import maplibregl from "maplibre-gl";
 import DeckGL from "@deck.gl/react";
 import { HexagonLayer } from "@deck.gl/aggregation-layers";
@@ -29,6 +29,15 @@ type Place = {
   lon: number;
 };
 
+type PlaceOption = {
+  id: string;
+  name: string;
+  kind: string;
+  lat: number;
+  lon: number;
+  source: "places_api" | "user";
+};
+
 const PLACE_KINDS: PlaceKind[] = [
   "community_hotspot",
   "community_centre",
@@ -51,6 +60,16 @@ type RecommendItem = {
   report_no: number;
   conflict: boolean;
   reasons: string[];
+  report_signage?: number;
+report_summary?: string | null;
+report_signage_text?: string | null;
+
+report_place_name?: string | null;
+report_place_kind?: string | null;
+report_place_id?: string | null;
+report_place_source?: string | null;
+report_place_address?: string | null;
+report_details?: any;
 };
 
 function bboxFromMap(map: maplibregl.Map) {
@@ -60,6 +79,21 @@ function bboxFromMap(map: maplibregl.Map) {
   const north = b.getNorth();
   const east = b.getEast();
   return [south, west, north, east].map((x) => Number(x.toFixed(6))).join(",");
+}
+
+function haversineMeters(aLat: number, aLon: number, bLat: number, bLon: number) {
+  const R = 6371000;
+  const toRad = (x: number) => (x * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLon = toRad(bLon - aLon);
+  const sLat1 = toRad(aLat);
+  const sLat2 = toRad(bLat);
+
+  const sin1 = Math.sin(dLat / 2);
+  const sin2 = Math.sin(dLon / 2);
+  const h = sin1 * sin1 + Math.cos(sLat1) * Math.cos(sLat2) * sin2 * sin2;
+
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
 function getCameraCountsForH3(points: Pt[], h3Index: string, res: number, k = 1) {
@@ -300,24 +334,52 @@ React.useEffect(() => {
   const [booting, setBooting] = useState(true);
 
   const [reportText, setReportText] = useState("");
-  const [proofImage, setProofImage] = useState<string | null>(null);
+  // NEW: place identity for reports
+const [placeName, setPlaceName] = useState("");
+const [placeKindInput, setPlaceKindInput] = useState<string>("building");
+const [placeId, setPlaceId] = useState<string | null>(null);
+const [placeSource, setPlaceSource] = useState<"places_api" | "user">("user");
+
+// NEW: structured details (stored in details JSON)
+const [details, setDetails] = useState({
+  area: "entrance",          // entrance, lobby, hallway, parking, sidewalk, other
+  indoors: "unknown",        // yes, no, unknown
+  lighting: "normal",        // bright, normal, dark
+  crowd: "normal",           // quiet, normal, crowded
+  time_of_day: "day",        // day, night
+  camera_location: "unknown" // ceiling, wall, pole, door, unknown
+});
   const [selected, setSelected] = useState<{ lat: number; lon: number; h3: string; report_h3: string } | null>(null);
+
+
+
+
 
   const [claim, setClaim] = useState<"camera_present" | "camera_absent">("camera_present");
   const abortRef = useRef<AbortController | null>(null);
   const [hovered, setHovered] = useState<{ lat: number; lon: number; h3: string; report_h3: string } | null>(null);
   const [reportCells, setReportCells] = useState<
-    Array<{
-      h3_index: string;
-      camera_present_count: number;
-      camera_absent_count: number;
-      signage_count: number;
-      summary?: string;
-      signage_text?: string;
-    }>
-  >([]);
+  Array<{
+    h3_index: string;
+    camera_present_count: number;
+    camera_absent_count: number;
+    signage_count: number;
+    summary?: string;
+    signage_text?: string;
+
+    place_name?: string;
+    place_kind?: string;
+    place_id?: string;
+    place_source?: string;
+    place_address?: string;
+    details?: any;
+  }>
+>([]);
 
   const [lastError, setLastError] = useState<string | null>(null);
+
+ 
+
 
   // New Recommender UI State
   const [askText, setAskText] = useState("");
@@ -1008,6 +1070,88 @@ const recLayerData = useMemo(() => {
 }, [recommendations, kindEnabled]);
 
 
+const communityPlaces = useMemo<PlaceOption[]>(() => {
+  return reportCells
+    .filter((c) => Boolean(c.place_name))
+    .map((c) => {
+      const [lat, lon] = cellToLatLng(c.h3_index);
+      return {
+        id: `community:${c.h3_index}`,
+        name: String(c.place_name || "Place"),
+        kind: String(c.place_kind || "building"),
+        lat,
+        lon,
+        source: "user" as const,
+      };
+    });
+}, [reportCells]);
+
+
+const nearbyPlaceOptions = useMemo<PlaceOption[]>(() => {
+  if (!selected) return [];
+
+  const maxMeters = 220;
+
+  const placeOpts: PlaceOption[] = places.map((p) => ({
+    id: String(p.id),
+    name: String(p.name || kindLabel(p.kind)),
+    kind: String(p.kind),
+    lat: Number(p.lat),
+    lon: Number(p.lon),
+    source: "places_api",
+  }));
+
+  const all: PlaceOption[] = [...placeOpts, ...communityPlaces];
+
+  const scored = all
+    .map((p) => ({
+      ...p,
+      d: haversineMeters(selected.lat, selected.lon, p.lat, p.lon),
+    }))
+    .filter((p) => p.d <= maxMeters)
+    .sort((a, b) => a.d - b.d);
+
+  // De-dupe by (name + kind). Prefer places_api when duplicates exist.
+  const normalize = (s: string) => s.trim().toLowerCase();
+  const byKey = new Map<string, (PlaceOption & { d: number })>();
+
+  for (const p of scored) {
+    const key = `${normalize(p.name)}|${normalize(p.kind)}`;
+    const prev = byKey.get(key);
+
+    if (!prev) {
+      byKey.set(key, p);
+      continue;
+    }
+
+    const prevIsApi = prev.source === "places_api";
+    const curIsApi = p.source === "places_api";
+
+    // Prefer places_api; otherwise keep the closer one
+    if (!prevIsApi && curIsApi) byKey.set(key, p);
+    else if (prevIsApi === curIsApi && p.d < prev.d) byKey.set(key, p);
+  }
+
+  return Array.from(byKey.values())
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 12)
+    .map(({ d, ...rest }) => rest);
+}, [selected, places, communityPlaces]);
+
+
+React.useEffect(() => {
+  if (!selected) return;
+  if (placeName.trim()) return;
+
+  const first = nearbyPlaceOptions[0];
+  if (!first) return;
+
+  setPlaceId(first.id);
+  setPlaceName(first.name);
+  setPlaceKindInput(first.kind);
+  setPlaceSource(first.source);
+}, [selected?.report_h3, nearbyPlaceOptions]);
+
   const layers = useMemo(() => {
     if (booting) return [];
 
@@ -1045,6 +1189,23 @@ const recLayerData = useMemo(() => {
         })
       );
     }
+
+    if (communityPlaces.length > 0) {
+  mapLayers.push(
+    new ScatterplotLayer<any>({
+      id: "community-places-layer",
+      data: communityPlaces,
+      getPosition: (d) => [Number(d.lon), Number(d.lat)],
+      getFillColor: () => [160, 0, 255, 200],
+      getRadius: 10,
+      radiusMinPixels: 4,
+      getLineColor: [0, 0, 0, 160],
+      lineWidthMinPixels: 1,
+      stroked: true,
+      pickable: true,
+    })
+  );
+}
 
     const showCommunityReports = kindEnabled.community_hotspot; // or make a separate toggle if you want
 
@@ -1251,42 +1412,83 @@ if (showCommunityReports) {
           {recommendations.length > 0 && (
             <div style={{ marginTop: 10 }}>
               {recommendations.map((r) => {
-                const name = r.place.name || kindLabel(r.place.kind);
-                const shortReasons = r.reasons.slice(0, 2).join(" • ");
-                const dist = Math.round(r.distance_m);
-                return (
-                  <div
-                    key={r.place.id}
-                    style={{
-                      marginTop: 8,
-                      padding: 10,
-                      borderRadius: 10,
-                      border: "1px solid rgba(255,255,255,0.14)",
-                      background: "rgba(255,255,255,0.05)",
-                    }}
-                  >
-                    <div style={{ fontWeight: 800, fontSize: 13 }}>
-                      {name} <span style={{ fontWeight: 600, opacity: 0.75 }}>({dist}m)</span>
-                    </div>
-                    <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>
-                      {kindLabel(r.place.kind)} • {shortReasons}
-                    </div>
-                    <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
-                      Cameras nearby: {r.cameras_in_k1} • Reports: {r.report_yes + r.report_no}
-                      {r.conflict ? " • conflict" : ""}
-                    </div>
+  const displayName =
+    r.report_place_name || r.place.name || kindLabel(r.place.kind);
 
-                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                      <button
-                        style={btn(false)}
-                        onClick={() => chooseRecommendation(r)}
-                      >
-                        Choose
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+  const displayKind =
+    r.report_place_kind || r.place.kind;
+
+  const shortReasons = (r.reasons || []).slice(0, 2).join(" • ");
+  const dist = Math.round(r.distance_m);
+
+  const d = r.report_details || null;
+  const detailsLine = d
+    ? [
+        d.area ? `Area: ${d.area}` : null,
+        d.indoors ? `Indoors: ${d.indoors}` : null,
+        d.lighting ? `Light: ${d.lighting}` : null,
+        d.crowd ? `Crowd: ${d.crowd}` : null,
+        d.time_of_day ? `Time: ${d.time_of_day}` : null,
+        d.camera_location ? `Camera: ${d.camera_location}` : null,
+      ].filter(Boolean).join(" • ")
+    : "";
+
+  return (
+    <div
+      key={r.place.id}
+      style={{
+        marginTop: 8,
+        padding: 10,
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.14)",
+        background: "rgba(255,255,255,0.05)",
+      }}
+    >
+      <div style={{ fontWeight: 800, fontSize: 13 }}>
+        {displayName}{" "}
+        <span style={{ fontWeight: 600, opacity: 0.75 }}>
+          ({dist}m)
+        </span>
+      </div>
+
+      <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>
+        {String(displayKind).replaceAll("_", " ")}{" "}
+        {shortReasons ? ` • ${shortReasons}` : ""}
+      </div>
+
+      <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
+        Cameras nearby: {r.cameras_in_k1} • Reports: {r.report_yes + r.report_no}
+        {typeof r.report_signage === "number" ? ` • Signage: ${r.report_signage}` : ""}
+        {r.conflict ? " • conflict" : ""}
+      </div>
+
+      {/* NEW: show report summary + signage text + details */}
+      {r.report_summary ? (
+        <div style={{ fontSize: 12, opacity: 0.9, marginTop: 6 }}>
+          <b>Summary:</b> {r.report_summary}
+        </div>
+      ) : null}
+
+      {r.report_signage_text ? (
+        <div style={{ fontSize: 12, opacity: 0.9, marginTop: 6 }}>
+          <b>Signage:</b> {r.report_signage_text}
+        </div>
+      ) : null}
+
+      {detailsLine ? (
+        <div style={{ fontSize: 11, opacity: 0.75, marginTop: 6 }}>
+          {detailsLine}
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+        <button style={btn(false)} onClick={() => chooseRecommendation(r)}>
+          Choose
+        </button>
+      </div>
+    </div>
+  );
+})}
             </div>
           )}
         </div>
@@ -1483,6 +1685,208 @@ if (showCommunityReports) {
               }
             })()}
 
+            {/* NEW: Place identity */}
+<div style={{ marginTop: 12 }}>
+  <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>Place</div>
+
+  {nearbyPlaceOptions.length > 0 && (
+  <select
+    value={placeId ?? ""}
+    onChange={(e) => {
+  const id = e.target.value || null;
+
+  const p = nearbyPlaceOptions.find((x) => x.id === id);
+
+  if (p) {
+    setPlaceName(p.name);
+    setPlaceKindInput(p.kind);
+    setPlaceSource(p.source);
+
+    // key fix:
+    setPlaceId(p.source === "places_api" ? p.id : null);
+  } else {
+    setPlaceSource("user");
+    setPlaceId(null);
+  }
+    }}
+    style={{
+      width: "100%",
+      padding: "10px 10px",
+      borderRadius: 10,
+      border: "1px solid rgba(255,255,255,0.18)",
+      background: "rgba(255,255,255,0.06)",
+      color: "white",
+      outline: "none",
+      fontSize: 13,
+    }}
+  >
+    <option value="">Manual (type a name)</option>
+    {nearbyPlaceOptions.map((p) => (
+      <option key={p.id} value={p.id}>
+        {p.name} ({p.kind})
+      </option>
+    ))}
+  </select>
+)}
+
+  <input
+    value={placeName}
+    onChange={(e) => {
+      setPlaceName(e.target.value);
+      setPlaceId(null);
+      setPlaceSource("user");
+    }}
+    placeholder="Building / place name (required)"
+    style={{
+      marginTop: 8,
+      width: "100%",
+      padding: "10px 10px",
+      borderRadius: 10,
+      border: "1px solid rgba(255,255,255,0.18)",
+      background: "rgba(255,255,255,0.06)",
+      color: "white",
+      outline: "none",
+      fontSize: 13,
+    }}
+  />
+
+  <select
+    value={placeKindInput}
+    onChange={(e) => setPlaceKindInput(e.target.value)}
+    style={{
+      marginTop: 8,
+      width: "100%",
+      padding: "10px 10px",
+      borderRadius: 10,
+      border: "1px solid rgba(255,255,255,0.18)",
+      background: "rgba(255,255,255,0.06)",
+      color: "white",
+      outline: "none",
+      fontSize: 13,
+    }}
+  >
+    <option value="building">Building</option>
+    <option value="cafe">Cafe</option>
+    <option value="library">Library</option>
+    <option value="mall">Mall</option>
+    <option value="park">Park</option>
+    <option value="community_centre">Community center</option>
+    <option value="police">Police</option>
+    <option value="other">Other</option>
+  </select>
+
+  <div style={{ ...smallText, marginTop: 8 }}>
+    Tip: pick from the dropdown if it shows nearby places. If not, just type a building name.
+  </div>
+</div>
+
+{/* NEW: structured details */}
+<div style={{ marginTop: 12 }}>
+  <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>Details</div>
+
+  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+    <select
+      value={details.area}
+      onChange={(e) => setDetails((d) => ({ ...d, area: e.target.value }))}
+      style={{
+        padding: 10,
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: "rgba(255,255,255,0.06)",
+        color: "white",
+      }}
+    >
+      <option value="entrance">Entrance</option>
+      <option value="lobby">Lobby</option>
+      <option value="hallway">Hallway</option>
+      <option value="parking">Parking</option>
+      <option value="sidewalk">Sidewalk</option>
+      <option value="other">Other</option>
+    </select>
+
+    <select
+      value={details.indoors}
+      onChange={(e) => setDetails((d) => ({ ...d, indoors: e.target.value }))}
+      style={{
+        padding: 10,
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: "rgba(255,255,255,0.06)",
+        color: "white",
+      }}
+    >
+      <option value="unknown">Indoors?</option>
+      <option value="yes">Yes</option>
+      <option value="no">No</option>
+    </select>
+
+    <select
+      value={details.lighting}
+      onChange={(e) => setDetails((d) => ({ ...d, lighting: e.target.value }))}
+      style={{
+        padding: 10,
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: "rgba(255,255,255,0.06)",
+        color: "white",
+      }}
+    >
+      <option value="bright">Bright</option>
+      <option value="normal">Normal</option>
+      <option value="dark">Dark</option>
+    </select>
+
+    <select
+      value={details.crowd}
+      onChange={(e) => setDetails((d) => ({ ...d, crowd: e.target.value }))}
+      style={{
+        padding: 10,
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: "rgba(255,255,255,0.06)",
+        color: "white",
+      }}
+    >
+      <option value="quiet">Quiet</option>
+      <option value="normal">Normal</option>
+      <option value="crowded">Crowded</option>
+    </select>
+
+    <select
+      value={details.time_of_day}
+      onChange={(e) => setDetails((d) => ({ ...d, time_of_day: e.target.value }))}
+      style={{
+        padding: 10,
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: "rgba(255,255,255,0.06)",
+        color: "white",
+      }}
+    >
+      <option value="day">Day</option>
+      <option value="night">Night</option>
+    </select>
+
+    <select
+      value={details.camera_location}
+      onChange={(e) => setDetails((d) => ({ ...d, camera_location: e.target.value }))}
+      style={{
+        padding: 10,
+        borderRadius: 10,
+        border: "1px solid rgba(255,255,255,0.18)",
+        background: "rgba(255,255,255,0.06)",
+        color: "white",
+      }}
+    >
+      <option value="unknown">Camera location unknown</option>
+      <option value="ceiling">Ceiling</option>
+      <option value="wall">Wall</option>
+      <option value="pole">Pole</option>
+      <option value="door">Door / entrance</option>
+    </select>
+  </div>
+</div>
+
             <textarea
               value={reportText}
               onChange={(e) => setReportText(e.target.value)}
@@ -1509,41 +1913,71 @@ if (showCommunityReports) {
               </button>
             </div>
 
-            <div style={{ marginTop: 8 }}>
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  const dataUrl = await fileToCompressedDataUrl(f);
-                  setProofImage(dataUrl);
-                }}
-              />
-
-              {proofImage && (
-                <img
-                  src={proofImage}
-                  alt="proof"
-                  style={{
-                    marginTop: 8,
-                    width: "100%",
-                    borderRadius: 12,
-                    border: "1px solid rgba(255,255,255,0.15)",
-                  }}
-                />
-              )}
-            </div>
 
             <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
               <button
                 style={btn(false)}
                 disabled={submittingReport}
                 onClick={async () => {
-                  // ... Keep your exact submit logic here (omitted for brevity, paste your submit handler)
-                }}
-              >
+  try {
+    setSubmittingReport(true);
+    setLastError(null);
+
+    if (!selected) return;
+
+    if (!placeName.trim() || placeName.trim().length < 2) {
+      setLastError("Please enter a place/building name.");
+      return;
+    }
+
+    if (!reportText.trim() || reportText.trim().length < 3) {
+      setLastError("Write a short note.");
+      return;
+    }
+
+    const res = await fetch("/api/report", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+  lat: selected.lat,
+  lon: selected.lon,
+  claim,
+  user_text: reportText.trim(),
+  signage_image_base64: null,
+
+  place_name: placeName.trim(),
+  place_kind: String(placeKindInput || "building"),
+
+  // key fix:
+  place_id: placeSource === "places_api" ? placeId : null,
+  place_source: placeSource,
+
+  place_address: null,
+  details,
+}),
+    });
+
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j?.error || `submit failed (${res.status})`);
+
+    setReportText("");
+
+    // Keep place fields so user can submit another report nearby,
+    // or clear them if you prefer:
+    // setPlaceName("");
+    // setPlaceKindInput("building");
+    // setPlaceId(null);
+    // setPlaceSource("user");
+    // setPlaceCandidates([]);
+
+    await refresh();
+  } catch (e: any) {
+    setLastError(String(e?.message || e));
+  } finally {
+    setSubmittingReport(false);
+  }
+}}
+                          >
                 {submittingReport ? "Submitting..." : "Submit report"}
               </button>
 
@@ -1561,7 +1995,21 @@ if (showCommunityReports) {
                 onClick={() => {
                   setSelected(null);
                   setReportText("");
-                  setProofImage(null);
+
+                  setPlaceName("");
+                  setPlaceKindInput("building");
+                  setPlaceId(null);
+                  setPlaceSource("user");
+
+                  setDetails({
+                    area: "entrance",
+                    indoors: "unknown",
+                    lighting: "normal",
+                    crowd: "normal",
+                    time_of_day: "day",
+                    camera_location: "unknown",
+                  });
+
                   setLastError(null);
                 }}
               >
@@ -1569,6 +2017,21 @@ if (showCommunityReports) {
               </button>
             </div>
           </div>
+        )}
+
+        {/* Optional: only show this when a cell is selected */}
+        {selected && (
+          <button
+            style={{ ...btn(false), marginTop: 10 }}
+            onClick={() => {
+              setPlaceName("");
+              setPlaceKindInput("building");
+              setPlaceId(null);
+              setPlaceSource("user");
+            }}
+          >
+            Clear place
+          </button>
         )}
       </div>
 
@@ -1583,6 +2046,20 @@ if (showCommunityReports) {
           onInteractionStateChange={(s) => {
             const active = s.isDragging || s.isPanning || s.isZooming || s.isRotating;
             if (!active) scheduleRefresh(300);
+          }}
+          getTooltip={({ object, layer }: any) => {
+            if (!object) return null;
+
+            if (layer?.id === "places-layer") {
+              const name = object.name || kindLabel(object.kind);
+              return `${name}`;
+            }
+
+            if (layer?.id === "community-places-layer") {
+              return `${object.name || "Place"}`;
+            }
+
+            return null;
           }}
           onHover={(info) => {
             const pickResUi = 12;
@@ -1606,11 +2083,10 @@ if (showCommunityReports) {
             const [centerLat, centerLon] = cellToLatLng(reportH3);
             setSelected({ lat: centerLat, lon: centerLon, h3: uiH3, report_h3: reportH3 });
 
-            // Auto-open panel on mobile when an area is selected to show report UI
             setPanelOpen(true);
           }}
         >
-          <Map
+          <MapGL
             ref={mapRef}
             mapLib={maplibregl}
             reuseMaps
@@ -1621,13 +2097,13 @@ if (showCommunityReports) {
               const map = mapRef.current?.getMap();
               if (map) {
                 map.on("styleimagemissing", (e: any) => {
-                    const id = String(e?.id || "");
-                    if (!id) return;
-                    if (map.hasImage(id)) return;
+                  const id = String(e?.id || "");
+                  if (!id) return;
+                  if (map.hasImage(id)) return;
 
-                    const data = new Uint8Array(4); // transparent RGBA
-                    map.addImage(id, { width: 1, height: 1, data });
-                  });
+                  const data = new Uint8Array(4); // transparent RGBA
+                  map.addImage(id, { width: 1, height: 1, data });
+                });
               }
 
               if (!didAutoStartRef.current) {
@@ -1640,7 +2116,7 @@ if (showCommunityReports) {
             }}
           >
             <NavigationControl position="bottom-right" />
-          </Map>
+          </MapGL>
         </DeckGL>
       </div>
     </div>

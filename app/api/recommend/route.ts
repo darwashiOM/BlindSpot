@@ -32,6 +32,40 @@ type ReportCell = {
   signage_count: number;
   summary?: string;
   signage_text?: string;
+
+  place_name?: string;
+  place_kind?: string;
+  place_id?: string | null;
+  place_source?: string;
+  place_address?: string | null;
+  details?: any;
+};
+
+type RecommendItem = {
+  place: Place;
+  score: number;
+  distance_m: number;
+  h3: string;
+  cameras_in_k1: number;
+  cameras_in_cell: number;
+  report_yes: number;
+  report_no: number;
+  conflict: boolean;
+  reasons: string[];
+
+  report_signage: number;
+  report_summary?: string | null;
+  report_signage_text?: string | null;
+
+  report_place_name?: string | null;
+  report_place_kind?: string | null;
+  report_place_id?: string | null;
+  report_place_source?: string | null;
+  report_place_address?: string | null;
+  report_details?: any;
+
+  // internal helpers
+  _dedupeKey?: string;
 };
 
 type Intent =
@@ -48,19 +82,6 @@ type RecommendRequest = {
   excludeKinds?: string[];
 };
 
-type RecommendItem = {
-  place: Place;
-  score: number;
-  distance_m: number;
-  h3: string;
-  cameras_in_k1: number;
-  cameras_in_cell: number;
-  report_yes: number;
-  report_no: number;
-  conflict: boolean;
-  reasons: string[];
-};
-
 type CacheEntry = { at: number; data: any };
 const memCache = new Map<string, CacheEntry>();
 
@@ -68,6 +89,56 @@ function baseUrlFromReq(req: Request) {
   const host = req.headers.get("host") || "localhost:3000";
   const proto = req.headers.get("x-forwarded-proto") || "http";
   return `${proto}://${host}`;
+}
+
+
+function normalizeNameForKey(name?: string | null) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function dedupeByNameAndDistance(items: RecommendItem[], maxMeters = 180) {
+  const out: RecommendItem[] = [];
+
+  for (const it of items) {
+    const nameKey = normalizeNameForKey(it.place.name || it.report_place_name);
+    const isDup = out.some((o) => {
+      const otherKey = normalizeNameForKey(o.place.name || o.report_place_name);
+      if (!nameKey || !otherKey) return false;
+      if (nameKey !== otherKey) return false;
+
+      const d = haversineMeters(o.place.lat, o.place.lon, it.place.lat, it.place.lon);
+      return d <= maxMeters;
+    });
+
+    if (!isDup) out.push(it);
+  }
+
+  return out;
+}
+
+
+function normalizeText(s: string) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function quickHashBase36(s: string) {
+  const str = String(s || "");
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
 }
 
 function haversineMeters(aLat: number, aLon: number, bLat: number, bLon: number) {
@@ -101,7 +172,7 @@ function bboxToParam(b: { south: number; west: number; north: number; east: numb
 }
 
 function classifyIntent(text: string): Intent {
-  const t = (text || "").toLowerCase();
+  const t = normalizeText(text);
   if (t.includes("facebook") || t.includes("marketplace") || t.includes("sell") || t.includes("buyer") || t.includes("cash"))
     return "facebook_marketplace_sale";
   if (t.includes("date") || t.includes("tinder") || t.includes("hinge") || t.includes("first time"))
@@ -125,7 +196,7 @@ function intentConfig(intent: Intent) {
         library: 0.55,
         park: 0.35,
         mcd: 0.45,
-        community_hotspot: 0.55, // lowered so it helps but doesn't dominate
+        community_hotspot: 0.55,
       } as Record<PlaceKind, number>,
       label: "Marketplace sale",
       kindsQuery: ["police", "parking", "mall", "community_centre", "library", "cafe", "mcd"] as const,
@@ -145,7 +216,7 @@ function intentConfig(intent: Intent) {
         mcd: 0.5,
         police: 0.25,
         parking: 0.3,
-        community_hotspot: 0.5, // lowered
+        community_hotspot: 0.5,
       } as Record<PlaceKind, number>,
       label: "First date",
       kindsQuery: ["cafe", "mall", "park", "library", "community_centre", "mcd"] as const,
@@ -165,7 +236,7 @@ function intentConfig(intent: Intent) {
         community_centre: 0.55,
         park: 0.25,
         mcd: 0.45,
-        community_hotspot: 0.55, // lowered
+        community_hotspot: 0.55,
       } as Record<PlaceKind, number>,
       label: "Night walk",
       kindsQuery: ["police", "parking", "mall", "mcd", "community_centre"] as const,
@@ -184,7 +255,7 @@ function intentConfig(intent: Intent) {
       community_centre: 0.65,
       parking: 0.55,
       mcd: 0.55,
-      community_hotspot: 0.55, // lowered
+      community_hotspot: 0.55,
     } as Record<PlaceKind, number>,
     label: "Safe meetup",
     kindsQuery: ["police", "mall", "cafe", "park", "library", "community_centre", "parking", "mcd"] as const,
@@ -200,26 +271,94 @@ function safeNum(x: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
-// Dedupes ALL kinds (including hotspots) so you don't get 3 markers on one house
-function dedupeByDistance(items: RecommendItem[], minMeters: number) {
-  const out: RecommendItem[] = [];
-  for (const it of items) {
-    const ok = out.every((o) => haversineMeters(o.place.lat, o.place.lon, it.place.lat, it.place.lon) >= minMeters);
-    if (ok) out.push(it);
-  }
-  return out;
+function nameMatchScore(a?: string, b?: string) {
+  const A = normalizeText(a || "");
+  const B = normalizeText(b || "");
+  if (!A || !B) return 0;
+
+  if (A === B) return 1;
+
+  // token overlap
+  const aToks = new Set(A.split(" ").filter(Boolean));
+  const bToks = new Set(B.split(" ").filter(Boolean));
+  let inter = 0;
+  for (const t of aToks) if (bToks.has(t)) inter++;
+  const denom = Math.max(1, Math.min(aToks.size, bToks.size));
+  const overlap = inter / denom;
+
+  // substring helps for "gore" vs "gore hall"
+  const sub = A.includes(B) || B.includes(A) ? 0.35 : 0;
+
+  return Math.max(overlap, sub);
 }
 
+function promptMentionsPlace(text: string, placeName?: string) {
+  const t = normalizeText(text);
+  const n = normalizeText(placeName || "");
+  if (!t || !n) return 0;
 
-async function aiRerankResults(opts: { ai: any; text: string; intentLabel: string; userLat: number; userLon: number; items: RecommendItem[] }) {
+  // try matching full name and also key tokens
+  if (t.includes(n)) return 1;
+
+  const toks = n.split(" ").filter(Boolean);
+  if (toks.length) {
+    const strongTok = toks.find((x) => x.length >= 4 && t.includes(x));
+    if (strongTok) return 0.55;
+  }
+  return 0;
+}
+
+// Dedupes "same place represented multiple times" without killing nearby distinct buildings
+function dedupeBestByKey(items: RecommendItem[]) {
+  const best = new Map<string, RecommendItem>();
+
+  for (const it of items) {
+    const nameKey = it.place.name ? normalizeText(it.place.name) : "";
+    const cellKey = latLngToCell(it.place.lat, it.place.lon, 13);
+    const key = nameKey ? `${it.place.kind}|${nameKey}` : `${it.place.kind}|${cellKey}`;
+
+    it._dedupeKey = key;
+
+    const prev = best.get(key);
+    if (!prev || it.score > prev.score) best.set(key, it);
+  }
+
+  return Array.from(best.values());
+}
+
+function pickBestNearbyReportCell(repMap: Map<string, ReportCell>, h3: string, k: number) {
+  let best: ReportCell | null = null;
+  let bestW = -1;
+
+  for (const hh of gridDisk(h3, k)) {
+    const c = repMap.get(hh);
+    if (!c) continue;
+
+    const w = safeNum(c.camera_present_count) + safeNum(c.camera_absent_count) + safeNum(c.signage_count);
+    if (w > bestW) {
+      bestW = w;
+      best = c;
+    }
+  }
+
+  return best;
+}
+
+async function aiRerankResults(opts: {
+  ai: any;
+  text: string;
+  intentLabel: string;
+  userLat: number;
+  userLon: number;
+  items: RecommendItem[];
+}) {
   const { ai, text, intentLabel, userLat, userLon, items } = opts;
 
-  // If there are 0 or 1 candidates, reranking is pointless
   if (items.length <= 1) {
     return { ordered: items, aiUsed: false, aiReasons: {} as Record<string, string> };
   }
 
-  // Keep prompt small
+  // Keep prompt small but include what matters for the UX
   const candidates = items.slice(0, 25).map((it) => ({
     id: it.place.id,
     name: it.place.name ?? null,
@@ -228,7 +367,10 @@ async function aiRerankResults(opts: { ai: any; text: string; intentLabel: strin
     cameras_in_k1: it.cameras_in_k1,
     report_yes: it.report_yes,
     report_no: it.report_no,
+    report_signage: it.report_signage,
     conflict: it.conflict,
+    report_place_name: it.report_place_name ?? null,
+    report_summary_present: Boolean(it.report_summary && String(it.report_summary).trim()),
   }));
 
   const prompt =
@@ -236,14 +378,18 @@ async function aiRerankResults(opts: { ai: any; text: string; intentLabel: strin
     `User request: ${JSON.stringify(text)}\n` +
     `Intent label: ${JSON.stringify(intentLabel)}\n` +
     `User location: ${userLat.toFixed(5)}, ${userLon.toFixed(5)}\n\n` +
-    `Each candidate has:\n` +
-    `- cameras_in_k1: number of map camera markers in nearby H3 cells\n` +
+    `Candidate fields:\n` +
+    `- kind: type of place\n` +
+    `- distance_m: distance from user\n` +
+    `- cameras_in_k1: map camera markers nearby (higher means more cameras)\n` +
     `- report_yes/report_no: community reports about cameras\n` +
+    `- report_signage: count of signage mentions\n` +
     `- conflict: true if both yes and no reports exist\n\n` +
     `Ranking rules:\n` +
-    `- Prefer candidates with higher report_yes and higher cameras_in_k1.\n` +
-    `- Penalize conflict, and penalize high report_no.\n` +
-    `- Prefer closer distance, but do not ignore strong community evidence.\n` +
+    `- Strongly prioritize community evidence: higher report_yes and report_signage.\n` +
+    `- Penalize high report_no and penalize conflict.\n` +
+    `- Prefer closer distance when evidence is similar.\n` +
+    `- Use the user request semantics: for studying prefer library/cafe; for parking prefer parking/mall; for night prefer police/mall.\n` +
     `- Do NOT remove candidates, only reorder.\n` +
     `- Use ONLY the ids provided. Do NOT invent ids.\n\n` +
     `Return ONLY valid JSON with this exact shape:\n` +
@@ -251,11 +397,8 @@ async function aiRerankResults(opts: { ai: any; text: string; intentLabel: strin
     `Candidates:\n` +
     `${JSON.stringify(candidates)}`;
 
-  // Hard timeout so the endpoint never hangs
   const timeoutMs = 6000;
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error("ai_rerank_timeout")), timeoutMs)
-  );
+  const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("ai_rerank_timeout")), timeoutMs));
 
   const aiPromise = ai.models.generateContent({
     model: "gemini-2.5-flash",
@@ -275,10 +418,8 @@ async function aiRerankResults(opts: { ai: any; text: string; intentLabel: strin
   const order: string[] = Array.isArray(aiJson?.order) ? aiJson.order.map(String) : [];
   const reasons: Record<string, string> = aiJson?.reasons && typeof aiJson.reasons === "object" ? aiJson.reasons : {};
 
-  // Apply AI order, but keep everything else in original order
   const byId = new Map(items.map((it) => [it.place.id, it]));
   const used = new Set<string>();
-
   const ordered: RecommendItem[] = [];
 
   for (const id of order) {
@@ -289,10 +430,8 @@ async function aiRerankResults(opts: { ai: any; text: string; intentLabel: strin
 
     const r = reasons[id];
     if (r && typeof r === "string" && r.trim()) {
-      // Put AI reason first so frontend shows it
       it.reasons = [r.trim().slice(0, 90), ...it.reasons];
     }
-
     ordered.push(it);
   }
 
@@ -304,11 +443,10 @@ async function aiRerankResults(opts: { ai: any; text: string; intentLabel: strin
   return { ordered, aiUsed: ordered.length > 0, aiReasons: reasons };
 }
 
-
 export async function POST(req: Request) {
   const ai = getGemini();
-  const CAM_RES = 10; // cameras + scoring resolution
-  const HOTSPOT_RES = 9; // merge nearby report cells so hotspots don't spam
+  const CAM_RES = 10; // scoring resolution
+  const HOTSPOT_RES = 9; // merge report cells for hotspot markers
   const baseUrl = baseUrlFromReq(req);
 
   let body: RecommendRequest | null = null;
@@ -319,7 +457,6 @@ export async function POST(req: Request) {
   }
 
   const exclude = new Set<PlaceKind>((body?.excludeKinds || []) as PlaceKind[]);
-
   const text = String(body?.text || "").slice(0, 800);
   const lat = Number(body?.lat);
   const lon = Number(body?.lon);
@@ -334,7 +471,9 @@ export async function POST(req: Request) {
   const cfg = intentConfig(intent);
 
   const excludeKey = [...exclude].sort().join("|");
-  const cacheKey = `rec:${intent}:${lat.toFixed(4)}:${lon.toFixed(4)}:${maxResults}:ex=${excludeKey}`;
+  const textKey = quickHashBase36(normalizeText(text).slice(0, 260)); // make prompt affect caching
+  const cacheKey = `rec:${intent}:${lat.toFixed(4)}:${lon.toFixed(4)}:${maxResults}:t=${textKey}:ex=${excludeKey}`;
+
   const now = Date.now();
   const ttlMs = 60 * 1000;
 
@@ -347,20 +486,19 @@ export async function POST(req: Request) {
   const bboxParam = bboxToParam(bbox);
 
   const communityEnabled = !exclude.has("community_hotspot");
-
   const allowedKinds = (cfg.kindsQuery as readonly string[]).filter((k) => !exclude.has(k as PlaceKind));
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
 
   try {
-    // If the user excluded all place kinds, do NOT call /api/places with empty kinds
     const placesPromise =
       allowedKinds.length === 0
         ? Promise.resolve({ places: [] as Place[] })
-        : fetch(`${baseUrl}/api/places?bbox=${encodeURIComponent(bboxParam)}&kinds=${encodeURIComponent(allowedKinds.join(","))}`, {
-            signal: controller.signal,
-          })
+        : fetch(
+            `${baseUrl}/api/places?bbox=${encodeURIComponent(bboxParam)}&kinds=${encodeURIComponent(allowedKinds.join(","))}`,
+            { signal: controller.signal }
+          )
             .then((r) => r.json().catch(() => ({})))
             .then((j) => ({ places: (Array.isArray(j?.places) ? j.places : []) as Place[] }))
             .catch(() => ({ places: [] as Place[] }));
@@ -379,7 +517,7 @@ export async function POST(req: Request) {
     const cameras: CameraPt[] = Array.isArray(camsJson?.points) ? camsJson.points : [];
     const reportCells: ReportCell[] = Array.isArray(repJson?.cells) ? repJson.cells : [];
 
-    // Camera counts per CAM_RES cell
+    // Cameras per CAM_RES cell
     const camCounts = new Map<string, number>();
     for (const p of cameras) {
       const plat = Number(p?.lat);
@@ -389,71 +527,63 @@ export async function POST(req: Request) {
       camCounts.set(h3, (camCounts.get(h3) || 0) + 1);
     }
 
-    // Report map by CAM_RES cell (same res as scoring)
+    // Reports by CAM_RES cell
     const repMap = new Map<string, ReportCell>();
     for (const c of reportCells) {
       if (!c?.h3_index) continue;
       repMap.set(c.h3_index, c);
     }
 
-    // Build merged hotspots so one building does not create 2 to 3 hotspot points
+    // Build merged hotspots (optional)
     const hotspots: Place[] = [];
     if (communityEnabled) {
-      type HotAgg = {
-  yes: number;
-  no: number;
-  count: number;
-  bestChild: string;   // CAM_RES-ish child cell that has strongest "yes"
-  bestYes: number;
-};
+      type HotAgg = { yes: number; no: number; count: number; bestChild: string; bestYes: number };
+      const agg = new Map<string, HotAgg>();
 
-const agg = new Map<string, HotAgg>();
+      for (const c of reportCells) {
+        const yes = safeNum(c?.camera_present_count);
+        const no = safeNum(c?.camera_absent_count);
+        if (yes < 2) continue;
 
-for (const c of reportCells) {
-  const yes = safeNum(c?.camera_present_count);
-  const no = safeNum(c?.camera_absent_count);
+        const child = c.h3_index;
+        let parent = child;
+        try {
+          parent = cellToParent(child, HOTSPOT_RES);
+        } catch {}
 
-  // Safety mode hotspot: require at least 2 "yes" reports
-  if (yes < 2) continue;
+        const prev = agg.get(parent);
+        if (!prev) {
+          agg.set(parent, { yes, no, count: 1, bestChild: child, bestYes: yes });
+        } else {
+          prev.yes += yes;
+          prev.no += no;
+          prev.count += 1;
+          if (yes > prev.bestYes) {
+            prev.bestYes = yes;
+            prev.bestChild = child;
+          }
+        }
+      }
 
-  const child = c.h3_index; // this is the report cell returned at res=CAM_RES
-  let parent = child;
-  try {
-    parent = cellToParent(child, HOTSPOT_RES);
-  } catch {}
+      for (const [parent, a] of agg.entries()) {
+        const [centerLat, centerLon] = cellToLatLng(a.bestChild);
 
-  const prev = agg.get(parent);
-  if (!prev) {
-    agg.set(parent, { yes, no, count: 1, bestChild: child, bestYes: yes });
-  } else {
-    prev.yes += yes;
-    prev.no += no;
-    prev.count += 1;
+        const d = haversineMeters(lat, lon, centerLat, centerLon);
+        if (d > cfg.maxDistanceM * 1.05) continue;
 
-    // pick a child cell that best represents this hotspot
-    if (yes > prev.bestYes) {
-      prev.bestYes = yes;
-      prev.bestChild = child;
-    }
-  }
-}
+        const bestCell = repMap.get(a.bestChild);
+        const hotspotName =
+          (bestCell?.place_name && String(bestCell.place_name).trim()) ||
+          (a.yes >= 5 ? "Community confirmed camera area" : "Community reported camera area");
 
-for (const [parent, a] of agg.entries()) {
-  // IMPORTANT: place the hotspot at the best CHILD cell center,
-  // so repMap(placeH3) hits the cell with your votes.
-  const [centerLat, centerLon] = cellToLatLng(a.bestChild);
-
-  const d = haversineMeters(lat, lon, centerLat, centerLon);
-  if (d > cfg.maxDistanceM * 1.05) continue;
-
-  hotspots.push({
-    id: `community/${parent}`, // keep id stable
-    kind: "community_hotspot",
-    name: a.yes >= 5 ? "Community confirmed camera area" : "Community reported camera area",
-    lat: centerLat,
-    lon: centerLon,
-  });
-}
+        hotspots.push({
+          id: `community/${parent}`,
+          kind: "community_hotspot",
+          name: hotspotName,
+          lat: centerLat,
+          lon: centerLon,
+        });
+      }
     }
 
     const scored: RecommendItem[] = [];
@@ -465,56 +595,95 @@ for (const [parent, a] of agg.entries()) {
       if (d > cfg.maxDistanceM * 1.05) return;
 
       const placeH3 = latLngToCell(pl.lat, pl.lon, CAM_RES);
-      const neighbors = gridDisk(placeH3, 1);
 
+      const neighbors = gridDisk(placeH3, 1);
       const camsInCell = camCounts.get(placeH3) || 0;
       let camsK1 = 0;
       for (const h of neighbors) camsK1 += camCounts.get(h) || 0;
 
-      const cell = repMap.get(placeH3);
+      // If this exact cell has no report row, try nearby cells so "same building area" still gets evidence
+      let cell = repMap.get(placeH3) || null;
+
+if (!cell) {
+  const bestNearby = pickBestNearbyReportCell(repMap, placeH3, 1);
+
+  // only borrow if the report place name matches this place name decently
+  const match = nameMatchScore(pl.name, bestNearby?.place_name);
+  if (match >= 0.45) cell = bestNearby;
+}
+
       const yes = safeNum(cell?.camera_present_count);
       const no = safeNum(cell?.camera_absent_count);
+      const signage = safeNum(cell?.signage_count);
       const conflict = yes > 0 && no > 0;
 
+      const reportSummary = typeof cell?.summary === "string" ? cell.summary : null;
+      const reportSignageText = typeof cell?.signage_text === "string" ? cell.signage_text : null;
+
+      const reportPlaceName = typeof cell?.place_name === "string" ? cell.place_name : null;
+      const reportPlaceKind = typeof cell?.place_kind === "string" ? cell.place_kind : null;
+      const reportPlaceSource = typeof cell?.place_source === "string" ? cell.place_source : null;
+      const reportPlaceId = cell?.place_id != null ? String(cell.place_id) : null;
+      const reportPlaceAddress = typeof cell?.place_address === "string" ? cell.place_address : null;
+      const reportDetails = cell?.details ?? null;
+
+      // Core scoring: emphasize community reports first, then distance, then cameras.
+      // Keep type influence small so adding a new nearby place does not automatically kick out the old one.
       const distScore = clamp01(1 - d / cfg.maxDistanceM);
+
+      // soft log scale: 0..1-ish
       const camScore = clamp01(Math.log1p(camsK1) / Math.log(1 + 18));
 
+      // community evidence: yes boosts, no penalizes; signage mildly boosts
       let repScore = 0;
-      if (yes >= 5) repScore += 1.0;
-      else if (yes >= 2) repScore += 0.6;
-      else if (yes >= 1) repScore += 0.25;
+      if (yes >= 6) repScore += 1.15;
+      else if (yes >= 4) repScore += 0.95;
+      else if (yes >= 2) repScore += 0.70;
+      else if (yes >= 1) repScore += 0.30;
 
-      if (no >= 5) repScore -= 0.8;
+      if (no >= 6) repScore -= 0.95;
+      else if (no >= 4) repScore -= 0.70;
       else if (no >= 2) repScore -= 0.35;
       else if (no >= 1) repScore -= 0.15;
 
+      const signageScore = clamp01(signage / 4) * 0.35;
+
+      // Name matching: if reports in this cell are about a specific place, prefer that place
+      const match = nameMatchScore(pl.name, reportPlaceName);
+      const placeMatchBoost = match >= 0.75 ? 0.45 : match >= 0.45 ? 0.22 : 0;
+
+      // If the cell has a different named place and this place does not match, lightly avoid "borrowing" those reviews
+      const mismatchPenalty = reportPlaceName && match < 0.2 ? 0.10 : 0;
+
+      // If the user prompt mentions the place name, bump it (lets users ask for Gore Hall directly)
+      const promptBoost = promptMentionsPlace(text, pl.name) > 0 ? 0.35 : 0;
+
+      // Small type bonus (not dominating)
+      const typeW = cfg.kindWeight[pl.kind] ?? 0.55;
+      const typeBonus = (typeW - 0.55) * 0.8;
+
       const isHotspot = pl.kind === "community_hotspot";
-      const conflictPenalty = conflict ? 0.55 : 0;
+      const conflictPenalty = conflict ? 0.35 : 0;
 
-      const typeW = cfg.kindWeight[pl.kind] ?? 0.5;
-
-      // Hotspots should help, not auto-win
-      const typeFactor = isHotspot ? 1.2 : 2.0;
-      const distFactor = 2.0;
-      const camFactor = isHotspot ? 1.0 : 1.8;
-      const repFactor = isHotspot ? 1.4 : 2.0;
-
-      const evidenceBoost =
-        (camsK1 >= 1 ? (isHotspot ? 0.18 : 0.35) : 0) + (yes >= 1 ? (isHotspot ? 0.18 : 0.35) : 0);
-
-      // If a hotspot has weak nearby camera signal, slightly downgrade it
-      const weakHotspotPenalty = isHotspot && camsK1 === 0 && yes < 5 ? 0.45 : 0;
+      // Hotspots should help but not auto-win
+      const weakHotspotPenalty = isHotspot && camsK1 === 0 && yes < 5 ? 0.28 : 0;
 
       const score =
-        typeW * typeFactor +
-        distScore * distFactor +
-        camScore * camFactor +
-        repScore * repFactor -
-        conflictPenalty +
-        evidenceBoost -
+        repScore * 2.5 +
+        signageScore * 1.0 +
+        distScore * 1.7 +
+        camScore * 1.1 +
+        typeBonus +
+        placeMatchBoost +
+        promptBoost -
+        mismatchPenalty -
+        conflictPenalty -
         weakHotspotPenalty;
 
       const reasons: string[] = [];
+
+      if (placeMatchBoost > 0) reasons.push("Matches community reports for this place");
+      if (promptBoost > 0) reasons.push("Matches your request");
 
       if (isHotspot) {
         reasons.push(yes >= 5 ? "Community confirmed camera presence" : "Community reports camera presence");
@@ -524,11 +693,13 @@ for (const [parent, a] of agg.entries()) {
 
       if (yes >= 5) reasons.push("High community confidence");
       else if (yes >= 2) reasons.push("Some community confirmation");
+      else if (no >= 2) reasons.push("Community reports fewer cameras");
 
       if (camsK1 >= 6) reasons.push("High camera marker density nearby");
       else if (camsK1 >= 2) reasons.push("Some camera markers nearby");
       else reasons.push("Camera coverage uncertain (map data can be incomplete)");
 
+      if (signage >= 1) reasons.push("Signage mentioned nearby");
       if (conflict) reasons.push("Conflicting community reports");
 
       scored.push({
@@ -540,8 +711,19 @@ for (const [parent, a] of agg.entries()) {
         cameras_in_cell: camsInCell,
         report_yes: yes,
         report_no: no,
+        report_signage: signage,
         conflict,
         reasons,
+
+        report_summary: reportSummary,
+        report_signage_text: reportSignageText,
+
+        report_place_name: reportPlaceName,
+        report_place_kind: reportPlaceKind,
+        report_place_id: reportPlaceId,
+        report_place_source: reportPlaceSource,
+        report_place_address: reportPlaceAddress,
+        report_details: reportDetails,
       });
     }
 
@@ -551,11 +733,15 @@ for (const [parent, a] of agg.entries()) {
     }
     for (const h of hotspots) scorePlace(h);
 
-    scored.sort((a, b) => b.score - a.score);
+    // IMPORTANT: dedupe by "same place" key, not by distance (so Gore and Evans can both exist)
+    const deduped = dedupeBestByKey(scored);
+
+    // Sort high score first
+    deduped.sort((a, b) => b.score - a.score);
 
     // If user excluded all place kinds, return hotspots only (or empty if community disabled)
     if (allowedKinds.length === 0) {
-      const onlyHotspots = communityEnabled ? dedupeByDistance(scored.filter((x) => x.place.kind === "community_hotspot"), 250) : [];
+      const onlyHotspots = communityEnabled ? deduped.filter((x) => x.place.kind === "community_hotspot") : [];
       const payload = {
         intent,
         intentLabel: cfg.label,
@@ -575,71 +761,67 @@ for (const [parent, a] of agg.entries()) {
       };
 
       memCache.set(cacheKey, { at: now, data: payload });
+
       return NextResponse.json(payload, { status: 200 });
     }
 
-    // Diversity selection: cap hotspots so they do not take over the list
+    // Cap hotspots so they do not dominate
     const maxHotspots = communityEnabled ? Math.min(2, Math.ceil(maxResults / 3)) : 0;
 
-    const hotspotsSorted = dedupeByDistance(
-        scored.filter((x) => x.place.kind === "community_hotspot"),
-        250
-        );
+    const hotspotsSorted = deduped.filter((x) => x.place.kind === "community_hotspot");
+    const othersSorted = deduped.filter((x) => x.place.kind !== "community_hotspot");
 
-        const othersSorted = dedupeByDistance(
-        scored.filter((x) => x.place.kind !== "community_hotspot"),
-        250
-        );
+    // Prefer evidence, but allow close-by strong places to compete fairly
+    const evidenceStrength = (x: RecommendItem) => x.report_yes * 2 + x.report_signage + Math.min(6, x.cameras_in_k1);
+    const hasEvidence = (x: RecommendItem) => evidenceStrength(x) >= 2;
 
-    const hasEvidence = (x: RecommendItem) => x.cameras_in_k1 > 0 || x.report_yes > 0;
     const primary = othersSorted.filter(hasEvidence);
     const secondary = othersSorted.filter((x) => !hasEvidence(x));
 
     const top: RecommendItem[] = [];
-    const used = new Set<string>();
+    const usedIds = new Set<string>();
 
-    // Add a few hotspots (optional signal)
     for (const h of hotspotsSorted) {
       if (top.length >= maxHotspots) break;
-      if (used.has(h.place.id)) continue;
+      if (usedIds.has(h.place.id)) continue;
       top.push(h);
-      used.add(h.place.id);
+      usedIds.add(h.place.id);
     }
 
-    // Then real places, prioritized by evidence
     for (const it of primary) {
       if (top.length >= maxResults) break;
-      if (used.has(it.place.id)) continue;
+      if (usedIds.has(it.place.id)) continue;
       top.push(it);
-      used.add(it.place.id);
+      usedIds.add(it.place.id);
     }
 
-    // Fill any remaining slots
     for (const it of secondary) {
       if (top.length >= maxResults) break;
-      if (used.has(it.place.id)) continue;
+      if (usedIds.has(it.place.id)) continue;
       top.push(it);
-      used.add(it.place.id);
+      usedIds.add(it.place.id);
     }
 
     let finalTop = top.slice(0, maxResults);
-let aiRerankUsed = false;
+    let aiRerankUsed = false;
 
-try {
-  const rr = await aiRerankResults({
-    ai,
-    text,
-    intentLabel: cfg.label,
-    userLat: lat,
-    userLon: lon,
-    items: finalTop,
-  });
+    try {
+      const rr = await aiRerankResults({
+        ai,
+        text,
+        intentLabel: cfg.label,
+        userLat: lat,
+        userLon: lon,
+        items: finalTop,
+      });
 
-  finalTop = rr.ordered.slice(0, maxResults);
-  aiRerankUsed = rr.aiUsed;
-} catch {
-  // keep deterministic order if AI fails
-}
+      finalTop = rr.ordered.slice(0, maxResults);
+      aiRerankUsed = rr.aiUsed;
+    } catch {
+      // keep deterministic order if AI fails
+    }
+
+    finalTop = dedupeByNameAndDistance(finalTop, 180).slice(0, maxResults);
 
     const payload = {
       intent,
@@ -655,8 +837,10 @@ try {
         communityEnabled,
         maxHotspots,
         aiRerankUsed,
+        cacheKeyHint: cacheKey.slice(0, 60),
       },
-      note: "Recommendations prioritize meetup-friendly places. Community hotspots are capped so they do not dominate.",
+      note:
+        "Recommendations prioritize community reports first, then distance, then camera markers. Place type has only a small influence so one nearby new place will not automatically kick out another.",
     };
 
     memCache.set(cacheKey, { at: now, data: payload });

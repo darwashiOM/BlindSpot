@@ -8,7 +8,10 @@ export const runtime = "nodejs";
 type Pt = { lat: number; lon: number };
 
 // Retain memory cache to reduce duplicate database queries
-const cache = new LRUCache<string, any>({ max: 200, ttl: 1000 * 60 * 5 });
+const cache = new LRUCache<string, { points: Pt[]; source: string }>({
+  max: 200,
+  ttl: 1000 * 60 * 5,
+});
 
 const schema = z.object({
   bbox: z
@@ -16,9 +19,16 @@ const schema = z.object({
     .regex(/^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$/),
 });
 
+const dbUrl = process.env.DATABASE_URL || "";
+const isLocalDb =
+  dbUrl.includes("localhost") ||
+  dbUrl.includes("127.0.0.1") ||
+  dbUrl.includes("postgresql://postgres@") ||
+  dbUrl.includes("postgres://postgres@");
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  connectionString: dbUrl,
+  ssl: isLocalDb ? undefined : { rejectUnauthorized: false },
 });
 
 export async function GET(req: Request) {
@@ -26,11 +36,11 @@ export async function GET(req: Request) {
   const parsed = schema.safeParse({ bbox: url.searchParams.get("bbox") });
 
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid bbox" }, { status: 400 });
+    return NextResponse.json({ error: "bad_bbox" }, { status: 400 });
   }
 
-  const bbox = parsed.data.bbox;
-  const cached = cache.get(bbox);
+  const bboxStr = parsed.data.bbox;
+  const cached = cache.get(bboxStr);
   if (cached) {
     return NextResponse.json(
       { ...cached, from_cache: true },
@@ -38,7 +48,19 @@ export async function GET(req: Request) {
     );
   }
 
-  const [south, west, north, east] = bbox.split(",").map(Number);
+  const [south, west, north, east] = bboxStr.split(",").map(Number);
+
+  // Guard massive bboxes to prevent expensive full-table scans
+  const latSpan = Math.abs(north - south);
+  const lonSpan = Math.abs(east - west);
+  if (!Number.isFinite(latSpan) || !Number.isFinite(lonSpan) || latSpan > 1.2 || lonSpan > 1.2) {
+    const payload = { points: [] as Pt[], source: "guard_zoom_in" };
+    cache.set(bboxStr, payload);
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: { "cache-control": "public, max-age=60" },
+    });
+  }
 
   try {
     const { rows } = await pool.query(
@@ -52,22 +74,20 @@ export async function GET(req: Request) {
       [south, north, west, east]
     );
 
-    const points: Pt[] = rows.map((r: any) => ({
+    const points: Pt[] = (rows || []).map((r: any) => ({
       lat: Number(r.lat),
       lon: Number(r.lon),
     }));
 
     const payload = { points, source: "postgres" };
-    cache.set(bbox, payload);
+    cache.set(bboxStr, payload);
 
-    return NextResponse.json(
-      payload,
-      { status: 200, headers: { "cache-control": "public, max-age=60" } }
-    );
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: { "cache-control": "public, max-age=60" },
+    });
   } catch (e: any) {
-    return NextResponse.json(
-      { points: [], error: String(e?.message || e) },
-      { status: 200 } // Returning 200 so the frontend doesn't crash, just shows empty results
-    );
+    // Returning 200 so the frontend doesn't crash, just shows empty results
+    return NextResponse.json({ points: [], error: String(e?.message || e) }, { status: 200 });
   }
 }
