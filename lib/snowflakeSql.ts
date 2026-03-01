@@ -1,30 +1,35 @@
+// lib/snowflakeClient.ts
+import "server-only";
 import snowflake from "snowflake-sdk";
 
 type Row = Record<string, any>;
-let connPromise: Promise<any> | null = null;
+let connPromise: Promise<snowflake.Connection> | null = null;
 
 function requireEnv(name: string, val: string) {
   if (!val) throw new Error(`Missing ${name}`);
 }
 
 function normalizeAccount(raw: string) {
-  return (raw || "").trim().toLowerCase();
+  return (raw || "").trim();
 }
 
 function buildCfg() {
   const account = normalizeAccount(process.env.SNOWFLAKE_ACCOUNT || "");
-  const username = (process.env.SNOWFLAKE_USERNAME || "").trim();
+  const username = (process.env.SNOWFLAKE_USERNAME || process.env.SNOWFLAKE_USER || "").trim();
 
   const warehouse = (process.env.SNOWFLAKE_WAREHOUSE || "").trim();
   const database = (process.env.SNOWFLAKE_DATABASE || "CIVICFIX").trim();
-  const schema = (process.env.SNOWFLAKE_SCHEMA || "RAW").trim();
+  const schema = (process.env.SNOWFLAKE_SCHEMA || "PUBLIC").trim();
   const role = (process.env.SNOWFLAKE_ROLE || "").trim();
 
   const privateKeyB64 = (process.env.SNOWFLAKE_PRIVATE_KEY_B64 || "").trim();
-  const password = (process.env.SNOWFLAKE_PASSWORD || "").trim(); // can be password OR PAT
+
+  // Prefer PAT if present, otherwise password
+  const pat = (process.env.SNOWFLAKE_PAT || "").trim();
+  const password = (process.env.SNOWFLAKE_PASSWORD || "").trim();
 
   requireEnv("SNOWFLAKE_ACCOUNT", account);
-  requireEnv("SNOWFLAKE_USERNAME", username);
+  requireEnv("SNOWFLAKE_USERNAME (or SNOWFLAKE_USER)", username);
 
   const cfg: any = {
     account,
@@ -36,17 +41,27 @@ function buildCfg() {
     clientSessionKeepAlive: true,
   };
 
+  // Key pair auth (JWT)
   if (privateKeyB64) {
     const pem = Buffer.from(privateKeyB64, "base64").toString("utf8").trim();
     if (!pem.includes("BEGIN PRIVATE KEY")) {
-      throw new Error("SNOWFLAKE_PRIVATE_KEY_B64 is not PKCS8 PEM. It must start with -----BEGIN PRIVATE KEY-----");
+      throw new Error(
+        "SNOWFLAKE_PRIVATE_KEY_B64 is not PKCS8 PEM. It must start with -----BEGIN PRIVATE KEY-----"
+      );
     }
     cfg.privateKey = pem;
     cfg.authenticator = "SNOWFLAKE_JWT";
     return cfg;
   }
 
-  // Username/password or Username/PAT
+  // PAT auth
+  if (pat) {
+    cfg.authenticator = "PROGRAMMATIC_ACCESS_TOKEN";
+    cfg.token = pat; // Node driver reads PAT from token (or password) :contentReference[oaicite:1]{index=1}
+    return cfg;
+  }
+
+  // Username/password auth
   requireEnv("SNOWFLAKE_PASSWORD", password);
   cfg.password = password;
   cfg.authenticator = "SNOWFLAKE";
