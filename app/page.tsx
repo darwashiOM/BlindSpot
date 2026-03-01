@@ -9,6 +9,7 @@ import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { latLngToCell, cellToBoundary, gridDisk, cellToLatLng } from "h3-js";
 import { FlyToInterpolator } from "@deck.gl/core";
 import styles from "./page.module.css";
+import { useRouter } from "next/navigation";
 
 type Pt = { lat: number; lon: number };
 
@@ -234,6 +235,7 @@ export default function Home() {
   const refreshSeq = useRef(0);
   const recAbortRef = useRef<AbortController | null>(null);
   const recSeq = useRef(0);
+  const router = useRouter();
 
   type ReviewsResp = {
   yes?: number;
@@ -1346,6 +1348,13 @@ if (showCommunityReports) {
 
           <button className={styles.btn} onClick={flyToUser}>
             Locate me
+          </button>
+
+          <button
+            className={`${styles.btn} ${styles.btnPrimary}`}
+            onClick={() => router.push("/dashboard")}
+          >
+            Dashboard
           </button>
         </div>
       </div>

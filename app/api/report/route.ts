@@ -5,8 +5,84 @@ import { getGemini } from "@/lib/gemini";
 import { LRUCache } from "lru-cache";
 import { latLngToCell, cellToParent } from "h3-js";
 
-import { snowflakeExec } from "@/lib/snowflakeSql";
+import { snowflakeExec, snowflakeQuery } from "@/lib/snowflakeSql";
 
+import crypto from "crypto";
+
+
+async function snowflakeStatus() {
+  const rows = await snowflakeQuery(`
+    select
+      current_account() as account,
+      current_region() as region,
+      current_user() as user,
+      current_role() as role,
+      current_warehouse() as wh,
+      current_database() as db,
+      current_schema() as schema
+  `);
+
+  return rows?.[0] || null;
+}
+
+async function assertSnowflakeReady(reqId: string) {
+  // 1) basic connectivity
+  try {
+    await snowflakeQuery(`select 1 as ok`);
+  } catch (e: any) {
+    const err = pickErr(e);
+    console.error(`[report:${reqId}] snowflake ping failed`, err);
+    return { ok: false as const, reason: "snowflake_unreachable", err };
+  }
+
+  // 2) session context (warehouse is the #1 gotcha)
+  let ctx: any = null;
+  try {
+    ctx = await snowflakeStatus();
+  } catch (e: any) {
+    const err = pickErr(e);
+    console.error(`[report:${reqId}] snowflake ctx query failed`, err);
+    return { ok: false as const, reason: "snowflake_ctx_failed", err };
+  }
+
+  if (!ctx?.WH) {
+    // This usually means you never set warehouse in the driver connection
+    return { ok: false as const, reason: "no_warehouse_selected", ctx };
+  }
+
+  // 3) confirm target table exists (and you can at least see metadata)
+  try {
+    const t = await snowflakeQuery(
+      `
+      select 1 as ok
+      from CIVICFIX.information_schema.tables
+      where table_schema = 'RAW'
+        and table_name = 'REPORT_EVENTS'
+      limit 1
+      `
+    );
+    if (!t?.length) {
+      return { ok: false as const, reason: "table_not_found", ctx };
+    }
+  } catch (e: any) {
+    const err = pickErr(e);
+    console.error(`[report:${reqId}] table check failed`, err);
+    return { ok: false as const, reason: "table_check_failed", ctx, err };
+  }
+
+  return { ok: true as const, ctx };
+}
+
+
+function pickErr(e: any) {
+  return {
+    message: String(e?.message || e),
+    code: e?.code ?? e?.errno ?? null,
+    sqlState: e?.sqlState ?? null,
+    queryId: e?.queryId ?? e?.query_id ?? null,
+    name: e?.name ?? null,
+  };
+}
 
 export const runtime = "nodejs";
 
@@ -177,6 +253,8 @@ group by h3_index
       return NextResponse.json({ cells: rows });
     }
 
+
+    
     // Roll up canonical cells into parent res
     const agg = new Map<
   string,
@@ -277,8 +355,10 @@ group by h3_index
 }
 
 // POST /api/report
+// POST /api/report
 export async function POST(req: Request) {
   const ai = getGemini();
+  const reqId = crypto.randomUUID();
 
   try {
     const body = await req.json().catch(() => null);
@@ -337,18 +417,16 @@ export async function POST(req: Request) {
 
     const aiText = String(moderation?.text ?? "").trim();
     if (!aiText) throw new Error("Gemini returned empty response");
+
     let aiJson: any = null;
-try {
-  const start = aiText.indexOf("{");
-  const end = aiText.lastIndexOf("}");
-  const slice = start >= 0 && end > start ? aiText.slice(start, end + 1) : aiText;
-  aiJson = JSON.parse(slice);
-} catch (err) {
-  return NextResponse.json(
-    { error: "bad_ai_json", preview: aiText.slice(0, 220) },
-    { status: 502 }
-  );
-}
+    try {
+      const start = aiText.indexOf("{");
+      const end = aiText.lastIndexOf("}");
+      const slice = start >= 0 && end > start ? aiText.slice(start, end + 1) : aiText;
+      aiJson = JSON.parse(slice);
+    } catch {
+      return NextResponse.json({ error: "bad_ai_json", preview: aiText.slice(0, 220) }, { status: 502 });
+    }
 
     if (!aiJson.is_allowed) {
       return NextResponse.json({ error: "Report not allowed" }, { status: 403 });
@@ -386,7 +464,6 @@ try {
       const vText = String(vision?.text ?? "").trim();
       if (vText) {
         const vJson = JSON.parse(vText);
-
         if (vJson.contains_camera) autoTags.push("camera_visible");
         if (vJson.contains_signage) autoTags.push("signage_present");
         signageText = vJson.signage_text || null;
@@ -395,7 +472,7 @@ try {
 
     const mergedTags = Array.from(new Set([...(aiJson.tags || []), ...autoTags]));
 
-    // --- Insert into Postgres ---
+    // --- Insert into Postgres (source of truth) ---
     const insertRes = await pool.query(
       `insert into reports
         (
@@ -436,31 +513,134 @@ try {
     const insertedId = insertRes.rows?.[0]?.id ?? null;
     const createdAt = insertRes.rows?.[0]?.created_at ?? null;
 
-    // --- Best-effort Snowflake insert (do not block user) ---
-    try {
-      await snowflakeExec(
-        `insert into CIVICFIX.PUBLIC.REPORT_EVENTS
-          (EVENT_ID, CREATED_AT, H3_INDEX, LAT, LON, MODE, TAGS, SUMMARY, SIGNAGE_TEXT)
-         select
-          ?, ?, ?, ?, ?, ?, parse_json(?), ?, ?`,
-        [
-          insertedId ? String(insertedId) : null,
-          createdAt ? String(createdAt) : null,
-          h3_index,
-          String(lat),
-          String(lon),
-          mode,
-          JSON.stringify(mergedTags),
-          aiJson.summary ?? "",
-          signageText ?? "",
-        ]
+    // --- Snowflake (best effort) ---
+    let snowflakeOk = true;
+    let snowflakeErr: any = null;
+    let snowflakeCtx: any = null;
+
+    // Make sure Snowflake is usable before trying to insert
+    const ready = await assertSnowflakeReady(reqId);
+    if (!ready.ok) {
+      snowflakeOk = false;
+      snowflakeCtx = (ready as any).ctx ?? null;
+
+      return NextResponse.json(
+        {
+          ok: true,
+          savedToPostgres: true,
+          savedToSnowflake: false,
+          reqId,
+          snowflakeStep: "snowflake_ready",
+          snowflakeReason: (ready as any).reason,
+          snowflakeErr: (ready as any).err ?? null,
+          ctx: snowflakeCtx,
+        },
+        { status: 202 }
       );
-    } catch (e) {
-      console.error("Snowflake insert failed:", e);
     }
 
+    try {
+      const h3_12 = h3_index;
+
+      let h3_10: string | null = null;
+      let h3_9: string | null = null;
+      try {
+        h3_10 = cellToParent(h3_12, 10);
+      } catch {}
+      try {
+        h3_9 = cellToParent(h3_12, 9);
+      } catch {}
+
+      const sfEventId = insertedId ? String(insertedId) : crypto.randomUUID();
+      const createdIso = createdAt ? new Date(createdAt).toISOString() : new Date().toISOString();
+
+      // IMPORTANT FIX:
+      // Use INSERT .. SELECT .. and TRY_PARSE_JSON(?) instead of PARSE_JSON(?) inside VALUES(...)
+      await snowflakeExec(
+        `
+        insert into CIVICFIX.RAW.REPORT_EVENTS
+        (
+          EVENT_ID, CREATED_AT,
+          H3_12, H3_10, H3_9,
+          EVENT_DATE, EVENT_HOUR,
+          LAT, LON,
+          MODE, CLAIM,
+          TAGS, SUMMARY, SIGNAGE_TEXT,
+          PLACE_NAME, PLACE_KIND, PLACE_ID, PLACE_SOURCE, PLACE_ADDRESS,
+          DETAILS
+        )
+        select
+          ?, try_to_timestamp_ntz(?),
+          ?, ?, ?,
+          to_date(try_to_timestamp_ntz(?)),
+          date_trunc('hour', try_to_timestamp_ntz(?)),
+          ?, ?,
+          ?, ?,
+          try_parse_json(?), ?, ?,
+          ?, ?, ?, ?, ?,
+          try_parse_json(?)
+        `,
+        [
+          sfEventId,
+          createdIso,
+
+          h3_12,
+          h3_10,
+          h3_9,
+
+          createdIso,
+          createdIso,
+
+          Number(lat),
+          Number(lon),
+
+          mode,
+          claim,
+
+          JSON.stringify(mergedTags),
+          aiJson.summary ?? null,
+          signageText ?? null,
+
+          place_name ?? null,
+          place_kind ?? null,
+          place_id ?? null,
+          place_source ?? "user",
+          place_address ?? null,
+
+          JSON.stringify(details || {}),
+        ]
+      );
+    } catch (e: any) {
+      snowflakeOk = false;
+      snowflakeErr = pickErr(e);
+
+      try {
+        snowflakeCtx = await snowflakeStatus();
+      } catch {}
+
+      console.error(`[report:${reqId}] Snowflake insert failed`, snowflakeErr);
+
+      return NextResponse.json(
+        {
+          ok: true,
+          savedToPostgres: true,
+          savedToSnowflake: false,
+          reqId,
+          snowflakeStep: "snowflake_insert",
+          snowflakeErr,
+          ctx: snowflakeCtx,
+        },
+        { status: 202 }
+      );
+    }
+
+    // Success
     return NextResponse.json({
       ok: true,
+      savedToPostgres: true,
+      savedToSnowflake: true,
+      reqId,
+
       h3_index,
       claim,
       place_name,
@@ -470,18 +650,21 @@ try {
       details,
       summary: aiJson.summary,
       signage_text: signageText,
+
+      snowflakeOk,
+      snowflakeErr,
     });
   } catch (e: any) {
     console.error("POST /api/report failed:", e);
     return NextResponse.json(
-  {
-    error: "POST /api/report failed",
-    message: String(e?.message || e),
-    code: (e as any)?.code,
-    detail: (e as any)?.detail,
-    hint: (e as any)?.hint,
-  },
-  { status: 500 }
-);
+      {
+        error: "POST /api/report failed",
+        message: String(e?.message || e),
+        code: (e as any)?.code,
+        detail: (e as any)?.detail,
+        hint: (e as any)?.hint,
+      },
+      { status: 500 }
+    );
   }
 }

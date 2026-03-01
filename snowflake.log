@@ -1,0 +1,242 @@
+{"level":"INFO","message":"[4:04:12.049 AM]: Creating new connection object"}
+{"level":"INFO","message":"[4:04:12.075 AM]: Creating Connection[id: 21a4019f-786a-46f5-a021-f28891cdebcb] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: darwashi, role: ACCOUNTADMIN, database: CIVICFIX, schema: PUBLIC, warehouse: COMPUTE_WH, proxy was not configured, password is provided, region: undefined, authenticator: SNOWFLAKE, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[4:04:12.076 AM]: Connection[id: 21a4019f-786a-46f5-a021-f28891cdebcb] additional details: passcode in password is provided, passcode is not provided, private key is not provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[4:04:12.077 AM]: Connection[id: 21a4019f-786a-46f5-a021-f28891cdebcb] - connection object created successfully."}
+{"level":"INFO","message":"[4:04:12.077 AM]: Connection[id: 21a4019f-786a-46f5-a021-f28891cdebcb] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[4:04:12.078 AM]: Connection[id: 21a4019f-786a-46f5-a021-f28891cdebcb] - authentication successful using: SNOWFLAKE"}
+{"level":"INFO","message":"[4:04:12.078 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[4:04:12.081 AM]: No client config detected."}
+{"level":"INFO","message":"[4:04:12.081 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[4:04:12.081 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"ERROR","message":"[4:04:13.341 AM]: Connection[id: 21a4019f-786a-46f5-a021-f28891cdebcb] - connection failed after 1263.58 milliseconds. Error: Failed to authenticate: MFA authentication is required, but none of your current MFA methods are supported for programmatic authentication."}
+{"level":"INFO","message":"[4:07:04.604 AM]: Creating new connection object"}
+{"level":"INFO","message":"[4:07:04.615 AM]: Creating Connection[id: abfc4f7d-fb8e-482c-b4d6-0c4157c3a064] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: darwashi, role: ACCOUNTADMIN, database: CIVICFIX, schema: PUBLIC, warehouse: COMPUTE_WH, proxy was not configured, password is provided, region: undefined, authenticator: SNOWFLAKE, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[4:07:04.615 AM]: Connection[id: abfc4f7d-fb8e-482c-b4d6-0c4157c3a064] additional details: passcode in password is provided, passcode is not provided, private key is not provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[4:07:04.616 AM]: Connection[id: abfc4f7d-fb8e-482c-b4d6-0c4157c3a064] - connection object created successfully."}
+{"level":"INFO","message":"[4:07:04.616 AM]: Connection[id: abfc4f7d-fb8e-482c-b4d6-0c4157c3a064] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[4:07:04.617 AM]: Connection[id: abfc4f7d-fb8e-482c-b4d6-0c4157c3a064] - authentication successful using: SNOWFLAKE"}
+{"level":"ERROR","message":"[4:07:05.489 AM]: Connection[id: abfc4f7d-fb8e-482c-b4d6-0c4157c3a064] - connection failed after 873.12 milliseconds. Error: Failed to authenticate: MFA authentication is required, but none of your current MFA methods are supported for programmatic authentication."}
+{"level":"INFO","message":"[4:07:05.565 AM]: Creating new connection object"}
+{"level":"INFO","message":"[4:07:05.581 AM]: Creating Connection[id: b20137e8-0d00-4ea7-a353-b93355cbc818] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: darwashi, role: ACCOUNTADMIN, database: CIVICFIX, schema: PUBLIC, warehouse: COMPUTE_WH, proxy was not configured, password is provided, region: undefined, authenticator: SNOWFLAKE, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[4:07:05.581 AM]: Connection[id: b20137e8-0d00-4ea7-a353-b93355cbc818] additional details: passcode in password is provided, passcode is not provided, private key is not provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[4:07:05.581 AM]: Connection[id: b20137e8-0d00-4ea7-a353-b93355cbc818] - connection object created successfully."}
+{"level":"INFO","message":"[4:07:05.581 AM]: Connection[id: b20137e8-0d00-4ea7-a353-b93355cbc818] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[4:07:05.581 AM]: Connection[id: b20137e8-0d00-4ea7-a353-b93355cbc818] - authentication successful using: SNOWFLAKE"}
+{"level":"ERROR","message":"[4:07:06.354 AM]: Connection[id: b20137e8-0d00-4ea7-a353-b93355cbc818] - connection failed after 772.59 milliseconds. Error: Failed to authenticate: MFA authentication is required, but none of your current MFA methods are supported for programmatic authentication."}
+{"level":"INFO","message":"[4:07:09.022 AM]: Creating new connection object"}
+{"level":"INFO","message":"[4:07:09.024 AM]: Creating Connection[id: ebab4055-07e9-45cf-8650-5e27442ccb61] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: darwashi, role: ACCOUNTADMIN, database: CIVICFIX, schema: PUBLIC, warehouse: COMPUTE_WH, proxy was not configured, password is provided, region: undefined, authenticator: SNOWFLAKE, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[4:07:09.024 AM]: Connection[id: ebab4055-07e9-45cf-8650-5e27442ccb61] additional details: passcode in password is provided, passcode is not provided, private key is not provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[4:07:09.024 AM]: Connection[id: ebab4055-07e9-45cf-8650-5e27442ccb61] - connection object created successfully."}
+{"level":"INFO","message":"[4:07:09.024 AM]: Connection[id: ebab4055-07e9-45cf-8650-5e27442ccb61] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[4:07:09.024 AM]: Connection[id: ebab4055-07e9-45cf-8650-5e27442ccb61] - authentication successful using: SNOWFLAKE"}
+{"level":"ERROR","message":"[4:07:09.115 AM]: Connection[id: ebab4055-07e9-45cf-8650-5e27442ccb61] - connection failed after 90.63 milliseconds. Error: Failed to authenticate: MFA authentication is required, but none of your current MFA methods are supported for programmatic authentication."}
+{"level":"INFO","message":"[4:07:11.127 AM]: Creating new connection object"}
+{"level":"INFO","message":"[4:07:11.137 AM]: Creating Connection[id: 6b331c63-8083-4da9-961e-e62d027c7ee4] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: darwashi, role: ACCOUNTADMIN, database: CIVICFIX, schema: PUBLIC, warehouse: COMPUTE_WH, proxy was not configured, password is provided, region: undefined, authenticator: SNOWFLAKE, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[4:07:11.138 AM]: Connection[id: 6b331c63-8083-4da9-961e-e62d027c7ee4] additional details: passcode in password is provided, passcode is not provided, private key is not provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[4:07:11.138 AM]: Connection[id: 6b331c63-8083-4da9-961e-e62d027c7ee4] - connection object created successfully."}
+{"level":"INFO","message":"[4:07:11.138 AM]: Connection[id: 6b331c63-8083-4da9-961e-e62d027c7ee4] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[4:07:11.140 AM]: Connection[id: 6b331c63-8083-4da9-961e-e62d027c7ee4] - authentication successful using: SNOWFLAKE"}
+{"level":"ERROR","message":"[4:07:11.265 AM]: Connection[id: 6b331c63-8083-4da9-961e-e62d027c7ee4] - connection failed after 126.8 milliseconds. Error: Failed to authenticate: MFA authentication is required, but none of your current MFA methods are supported for programmatic authentication."}
+{"level":"INFO","message":"[4:07:19.507 AM]: Creating new connection object"}
+{"level":"INFO","message":"[4:07:19.509 AM]: Creating Connection[id: 729b9ef0-6f21-4e17-9637-fe980bb9a2c5] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: darwashi, role: ACCOUNTADMIN, database: CIVICFIX, schema: PUBLIC, warehouse: COMPUTE_WH, proxy was not configured, password is provided, region: undefined, authenticator: SNOWFLAKE, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[4:07:19.509 AM]: Connection[id: 729b9ef0-6f21-4e17-9637-fe980bb9a2c5] additional details: passcode in password is provided, passcode is not provided, private key is not provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[4:07:19.509 AM]: Connection[id: 729b9ef0-6f21-4e17-9637-fe980bb9a2c5] - connection object created successfully."}
+{"level":"INFO","message":"[4:07:19.509 AM]: Connection[id: 729b9ef0-6f21-4e17-9637-fe980bb9a2c5] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[4:07:19.509 AM]: Connection[id: 729b9ef0-6f21-4e17-9637-fe980bb9a2c5] - authentication successful using: SNOWFLAKE"}
+{"level":"ERROR","message":"[4:07:19.626 AM]: Connection[id: 729b9ef0-6f21-4e17-9637-fe980bb9a2c5] - connection failed after 116.6 milliseconds. Error: Failed to authenticate: MFA authentication is required, but none of your current MFA methods are supported for programmatic authentication."}
+{"level":"INFO","message":"[4:19:07.874 AM]: Creating new connection object"}
+{"level":"INFO","message":"[4:19:07.886 AM]: Creating Connection[id: 0ee3e5e1-b046-4a79-9e97-2be44de82205] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: darwashi, role: ACCOUNTADMIN, database: CIVICFIX, schema: PUBLIC, warehouse: COMPUTE_WH, proxy was not configured, password is provided, region: undefined, authenticator: SNOWFLAKE, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[4:19:07.886 AM]: Connection[id: 0ee3e5e1-b046-4a79-9e97-2be44de82205] additional details: passcode in password is provided, passcode is not provided, private key is not provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[4:19:07.886 AM]: Connection[id: 0ee3e5e1-b046-4a79-9e97-2be44de82205] - connection object created successfully."}
+{"level":"INFO","message":"[4:19:07.886 AM]: Connection[id: 0ee3e5e1-b046-4a79-9e97-2be44de82205] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[4:19:07.887 AM]: Connection[id: 0ee3e5e1-b046-4a79-9e97-2be44de82205] - authentication successful using: SNOWFLAKE"}
+{"level":"INFO","message":"[4:19:07.887 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[4:19:07.892 AM]: No client config detected."}
+{"level":"INFO","message":"[4:19:07.892 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[4:19:07.893 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"ERROR","message":"[4:19:08.813 AM]: Connection[id: 0ee3e5e1-b046-4a79-9e97-2be44de82205] - connection failed after 926.41 milliseconds. Error: Failed to authenticate: MFA authentication is required, but none of your current MFA methods are supported for programmatic authentication."}
+{"level":"INFO","message":"[5:17:18.250 AM]: Creating new connection object"}
+{"level":"INFO","message":"[5:21:36.829 AM]: Creating new connection object"}
+{"level":"INFO","message":"[5:31:41.752 AM]: Creating new connection object"}
+{"level":"INFO","message":"[5:31:41.763 AM]: Creating Connection[id: e7074473-4481-4410-9b4e-17b83cf6f93e] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: darwashi, role: ACCOUNTADMIN, database: CIVICFIX, schema: PUBLIC, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[5:31:41.763 AM]: Connection[id: e7074473-4481-4410-9b4e-17b83cf6f93e] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[5:31:41.763 AM]: Connection[id: e7074473-4481-4410-9b4e-17b83cf6f93e] - connection object created successfully."}
+{"level":"INFO","message":"[5:31:41.764 AM]: Connection[id: e7074473-4481-4410-9b4e-17b83cf6f93e] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[5:31:41.775 AM]: Connection[id: e7074473-4481-4410-9b4e-17b83cf6f93e] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[5:31:41.775 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[5:31:41.783 AM]: No client config detected."}
+{"level":"INFO","message":"[5:31:41.784 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[5:31:41.784 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"ERROR","message":"[5:31:42.042 AM]: Connection[id: e7074473-4481-4410-9b4e-17b83cf6f93e] - connection failed after 278.12 milliseconds. Error: JWT token is invalid. [a3f6d760-6f5f-4324-8425-986b74c12bc1]"}
+{"level":"INFO","message":"[5:35:02.370 AM]: Creating new connection object"}
+{"level":"INFO","message":"[5:35:02.377 AM]: Creating Connection[id: d65d4c26-58ce-4493-b7e6-305a0dfc3720] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: CIVICFIX_SVC, role: ACCOUNTADMIN, database: CIVICFIX, schema: PUBLIC, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[5:35:02.377 AM]: Connection[id: d65d4c26-58ce-4493-b7e6-305a0dfc3720] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[5:35:02.377 AM]: Connection[id: d65d4c26-58ce-4493-b7e6-305a0dfc3720] - connection object created successfully."}
+{"level":"INFO","message":"[5:35:02.377 AM]: Connection[id: d65d4c26-58ce-4493-b7e6-305a0dfc3720] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[5:35:02.381 AM]: Connection[id: d65d4c26-58ce-4493-b7e6-305a0dfc3720] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[5:35:02.382 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[5:35:02.387 AM]: No client config detected."}
+{"level":"INFO","message":"[5:35:02.387 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[5:35:02.387 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"ERROR","message":"[5:35:02.651 AM]: Connection[id: d65d4c26-58ce-4493-b7e6-305a0dfc3720] - connection failed after 273.7 milliseconds. Error: Role 'ACCOUNTADMIN' specified in the connect string is not granted to this user, or is not permitted for the credentials being used. Contact your local system administrator, or attempt to login with another role, e.g. PUBLIC."}
+{"level":"INFO","message":"[5:36:38.608 AM]: Creating new connection object"}
+{"level":"INFO","message":"[5:36:38.614 AM]: Creating Connection[id: dc90b2b8-a6e1-4cd6-99a3-7c207e90277b] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[5:36:38.614 AM]: Connection[id: dc90b2b8-a6e1-4cd6-99a3-7c207e90277b] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[5:36:38.615 AM]: Connection[id: dc90b2b8-a6e1-4cd6-99a3-7c207e90277b] - connection object created successfully."}
+{"level":"INFO","message":"[5:36:38.615 AM]: Connection[id: dc90b2b8-a6e1-4cd6-99a3-7c207e90277b] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[5:36:38.618 AM]: Connection[id: dc90b2b8-a6e1-4cd6-99a3-7c207e90277b] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[5:36:38.618 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[5:36:38.624 AM]: No client config detected."}
+{"level":"INFO","message":"[5:36:38.625 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[5:36:38.625 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"INFO","message":"[5:36:38.867 AM]: Connection[id: dc90b2b8-a6e1-4cd6-99a3-7c207e90277b] - connection established successfully after 251.76 milliseconds"}
+{"level":"INFO","message":"[5:39:39.457 AM]: Creating new connection object"}
+{"level":"INFO","message":"[5:39:39.478 AM]: Creating Connection[id: 7b6e7940-9f92-4d25-89bf-051f1a3ebabc] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[5:39:39.480 AM]: Connection[id: 7b6e7940-9f92-4d25-89bf-051f1a3ebabc] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[5:39:39.480 AM]: Connection[id: 7b6e7940-9f92-4d25-89bf-051f1a3ebabc] - connection object created successfully."}
+{"level":"INFO","message":"[5:39:39.481 AM]: Connection[id: 7b6e7940-9f92-4d25-89bf-051f1a3ebabc] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[5:39:39.493 AM]: Connection[id: 7b6e7940-9f92-4d25-89bf-051f1a3ebabc] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[5:39:39.493 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[5:39:39.495 AM]: No client config detected."}
+{"level":"INFO","message":"[5:39:39.495 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[5:39:39.495 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"INFO","message":"[5:39:39.777 AM]: Connection[id: 7b6e7940-9f92-4d25-89bf-051f1a3ebabc] - connection established successfully after 296.08 milliseconds"}
+{"level":"INFO","message":"[9:55:11.590 AM]: Creating new connection object"}
+{"level":"INFO","message":"[9:55:11.612 AM]: Creating Connection[id: 17e7ad39-9c91-4c8d-acbd-6117d3666b14] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[9:55:11.613 AM]: Connection[id: 17e7ad39-9c91-4c8d-acbd-6117d3666b14] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[9:55:11.614 AM]: Connection[id: 17e7ad39-9c91-4c8d-acbd-6117d3666b14] - connection object created successfully."}
+{"level":"INFO","message":"[9:55:11.614 AM]: Connection[id: 17e7ad39-9c91-4c8d-acbd-6117d3666b14] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[9:55:11.622 AM]: Connection[id: 17e7ad39-9c91-4c8d-acbd-6117d3666b14] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[9:55:11.623 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[9:55:11.625 AM]: No client config detected."}
+{"level":"INFO","message":"[9:55:11.625 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[9:55:11.625 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"INFO","message":"[9:55:11.991 AM]: Connection[id: 17e7ad39-9c91-4c8d-acbd-6117d3666b14] - connection established successfully after 377.08 milliseconds"}
+{"level":"INFO","message":"[10:04:02.338 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:04:02.358 AM]: Creating Connection[id: 306e9d53-ec73-4f7d-bc8f-ea554af24396] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:04:02.359 AM]: Connection[id: 306e9d53-ec73-4f7d-bc8f-ea554af24396] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:04:02.360 AM]: Connection[id: 306e9d53-ec73-4f7d-bc8f-ea554af24396] - connection object created successfully."}
+{"level":"INFO","message":"[10:04:02.360 AM]: Connection[id: 306e9d53-ec73-4f7d-bc8f-ea554af24396] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:04:02.368 AM]: Connection[id: 306e9d53-ec73-4f7d-bc8f-ea554af24396] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[10:04:02.369 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[10:04:02.370 AM]: No client config detected."}
+{"level":"INFO","message":"[10:04:02.370 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[10:04:02.371 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"INFO","message":"[10:04:02.714 AM]: Connection[id: 306e9d53-ec73-4f7d-bc8f-ea554af24396] - connection established successfully after 353.38 milliseconds"}
+{"level":"INFO","message":"[10:06:23.603 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:06:23.610 AM]: Creating Connection[id: 8ed79ce8-25f8-49e0-9900-8f7a6e077c83] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:06:23.610 AM]: Connection[id: 8ed79ce8-25f8-49e0-9900-8f7a6e077c83] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:06:23.611 AM]: Connection[id: 8ed79ce8-25f8-49e0-9900-8f7a6e077c83] - connection object created successfully."}
+{"level":"INFO","message":"[10:06:23.611 AM]: Connection[id: 8ed79ce8-25f8-49e0-9900-8f7a6e077c83] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:06:23.616 AM]: Connection[id: 8ed79ce8-25f8-49e0-9900-8f7a6e077c83] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[10:06:23.616 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[10:06:23.618 AM]: No client config detected."}
+{"level":"INFO","message":"[10:06:23.618 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[10:06:23.618 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"INFO","message":"[10:06:23.958 AM]: Connection[id: 8ed79ce8-25f8-49e0-9900-8f7a6e077c83] - connection established successfully after 347.6 milliseconds"}
+{"level":"INFO","message":"[10:09:37.964 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:09:37.983 AM]: Creating Connection[id: 155851b6-fb62-476a-8eaf-050605c4c099] with host: RUC42669.snowflakecomputing.com, account: RUC42669, accessUrl: https://RUC42669.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:09:37.983 AM]: Connection[id: 155851b6-fb62-476a-8eaf-050605c4c099] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:09:37.984 AM]: Connection[id: 155851b6-fb62-476a-8eaf-050605c4c099] - connection object created successfully."}
+{"level":"INFO","message":"[10:09:37.985 AM]: Connection[id: 155851b6-fb62-476a-8eaf-050605c4c099] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:09:37.992 AM]: Connection[id: 155851b6-fb62-476a-8eaf-050605c4c099] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[10:09:37.992 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[10:09:38.064 AM]: No client config detected."}
+{"level":"INFO","message":"[10:09:38.064 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[10:09:38.064 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"ERROR","message":"[10:09:38.480 AM]: Connection[id: 155851b6-fb62-476a-8eaf-050605c4c099] - connection failed after 495.03 milliseconds. Error: Request to Snowflake failed."}
+{"level":"INFO","message":"[10:09:38.560 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:09:38.562 AM]: Creating Connection[id: 599ba1af-60c4-4408-921b-cbf9dabb8841] with host: RUC42669.snowflakecomputing.com, account: RUC42669, accessUrl: https://RUC42669.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:09:38.562 AM]: Connection[id: 599ba1af-60c4-4408-921b-cbf9dabb8841] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:09:38.562 AM]: Connection[id: 599ba1af-60c4-4408-921b-cbf9dabb8841] - connection object created successfully."}
+{"level":"INFO","message":"[10:09:38.562 AM]: Connection[id: 599ba1af-60c4-4408-921b-cbf9dabb8841] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:09:38.565 AM]: Connection[id: 599ba1af-60c4-4408-921b-cbf9dabb8841] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"ERROR","message":"[10:09:38.933 AM]: Connection[id: 599ba1af-60c4-4408-921b-cbf9dabb8841] - connection failed after 370.69 milliseconds. Error: Request to Snowflake failed."}
+{"level":"INFO","message":"[10:09:51.859 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:09:51.865 AM]: Creating Connection[id: a39f258e-fb6b-44e4-b026-12fcb3760f5f] with host: RUC42669.snowflakecomputing.com, account: RUC42669, accessUrl: https://RUC42669.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:09:51.865 AM]: Connection[id: a39f258e-fb6b-44e4-b026-12fcb3760f5f] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:09:51.865 AM]: Connection[id: a39f258e-fb6b-44e4-b026-12fcb3760f5f] - connection object created successfully."}
+{"level":"INFO","message":"[10:09:51.866 AM]: Connection[id: a39f258e-fb6b-44e4-b026-12fcb3760f5f] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:09:51.871 AM]: Connection[id: a39f258e-fb6b-44e4-b026-12fcb3760f5f] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"ERROR","message":"[10:09:52.204 AM]: Connection[id: a39f258e-fb6b-44e4-b026-12fcb3760f5f] - connection failed after 338.11 milliseconds. Error: Request to Snowflake failed."}
+{"level":"INFO","message":"[10:10:00.550 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:10:00.559 AM]: Creating Connection[id: 41350b50-b967-460e-9c32-a9ba08209764] with host: RUC42669.snowflakecomputing.com, account: RUC42669, accessUrl: https://RUC42669.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:10:00.559 AM]: Connection[id: 41350b50-b967-460e-9c32-a9ba08209764] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:10:00.560 AM]: Connection[id: 41350b50-b967-460e-9c32-a9ba08209764] - connection object created successfully."}
+{"level":"INFO","message":"[10:10:00.560 AM]: Connection[id: 41350b50-b967-460e-9c32-a9ba08209764] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:10:00.571 AM]: Connection[id: 41350b50-b967-460e-9c32-a9ba08209764] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[10:10:00.572 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[10:10:00.650 AM]: No client config detected."}
+{"level":"INFO","message":"[10:10:00.651 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[10:10:00.651 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"ERROR","message":"[10:10:01.150 AM]: Connection[id: 41350b50-b967-460e-9c32-a9ba08209764] - connection failed after 589.87 milliseconds. Error: Request to Snowflake failed."}
+{"level":"INFO","message":"[10:17:04.212 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:17:04.221 AM]: Creating Connection[id: 0814eaa6-e28b-421c-95cd-ec3bee738319] with host: RUC42669.snowflakecomputing.com, account: RUC42669, accessUrl: https://RUC42669.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:17:04.223 AM]: Connection[id: 0814eaa6-e28b-421c-95cd-ec3bee738319] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:17:04.223 AM]: Connection[id: 0814eaa6-e28b-421c-95cd-ec3bee738319] - connection object created successfully."}
+{"level":"INFO","message":"[10:17:04.223 AM]: Connection[id: 0814eaa6-e28b-421c-95cd-ec3bee738319] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:17:04.249 AM]: Connection[id: 0814eaa6-e28b-421c-95cd-ec3bee738319] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[10:17:04.249 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[10:17:04.326 AM]: No client config detected."}
+{"level":"INFO","message":"[10:17:04.326 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[10:17:04.326 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"ERROR","message":"[10:17:04.835 AM]: Connection[id: 0814eaa6-e28b-421c-95cd-ec3bee738319] - connection failed after 611.51 milliseconds. Error: Request to Snowflake failed."}
+{"level":"INFO","message":"[10:18:27.034 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:18:27.041 AM]: Creating Connection[id: f9881097-19fb-4588-ba83-1b57daf64b0e] with host: RUC42669.snowflakecomputing.com, account: RUC42669, accessUrl: https://RUC42669.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:18:27.041 AM]: Connection[id: f9881097-19fb-4588-ba83-1b57daf64b0e] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:18:27.041 AM]: Connection[id: f9881097-19fb-4588-ba83-1b57daf64b0e] - connection object created successfully."}
+{"level":"INFO","message":"[10:18:27.042 AM]: Connection[id: f9881097-19fb-4588-ba83-1b57daf64b0e] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:18:27.061 AM]: Connection[id: f9881097-19fb-4588-ba83-1b57daf64b0e] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[10:18:27.061 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[10:18:27.064 AM]: No client config detected."}
+{"level":"INFO","message":"[10:18:27.064 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[10:18:27.064 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"ERROR","message":"[10:18:27.503 AM]: Connection[id: f9881097-19fb-4588-ba83-1b57daf64b0e] - connection failed after 460.91 milliseconds. Error: Request to Snowflake failed."}
+{"level":"INFO","message":"[10:25:19.401 AM]: Creating connection pool with provided options"}
+{"level":"INFO","message":"[10:25:19.406 AM]: Connection pool object created successfully"}
+{"level":"INFO","message":"[10:25:19.406 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:25:19.408 AM]: Creating Connection[id: 26612244-5773-4192-9a06-3726fdc0ebcb] with host: RUC42669.snowflakecomputing.com, account: RUC42669, accessUrl: https://RUC42669.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:25:19.408 AM]: Connection[id: 26612244-5773-4192-9a06-3726fdc0ebcb] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:25:19.409 AM]: Connection[id: 26612244-5773-4192-9a06-3726fdc0ebcb] - connection object created successfully."}
+{"level":"INFO","message":"[10:25:19.409 AM]: Connection[id: 26612244-5773-4192-9a06-3726fdc0ebcb] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:25:19.413 AM]: Connection[id: 26612244-5773-4192-9a06-3726fdc0ebcb] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[10:25:19.413 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[10:25:19.420 AM]: No client config detected."}
+{"level":"INFO","message":"[10:25:19.420 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[10:25:19.420 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"ERROR","message":"[10:25:19.826 AM]: Connection[id: 26612244-5773-4192-9a06-3726fdc0ebcb] - connection failed after 417.31 milliseconds. Error: Request to Snowflake failed."}
+{"level":"ERROR","message":"[10:25:19.827 AM]: Connection[id: 26612244-5773-4192-9a06-3726fdc0ebcb] - Unable to connect. Error: Request to Snowflake failed."}
+{"level":"ERROR","message":"[10:25:19.827 AM]: Connection pool factory creation failed: Request to Snowflake failed."}
+{"level":"INFO","message":"[10:28:17.479 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:28:17.489 AM]: Creating Connection[id: 76e0c90d-51e4-454a-98f3-57bd21d79342] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:28:17.489 AM]: Connection[id: 76e0c90d-51e4-454a-98f3-57bd21d79342] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:28:17.489 AM]: Connection[id: 76e0c90d-51e4-454a-98f3-57bd21d79342] - connection object created successfully."}
+{"level":"INFO","message":"[10:28:17.489 AM]: Connection[id: 76e0c90d-51e4-454a-98f3-57bd21d79342] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:28:17.503 AM]: Connection[id: 76e0c90d-51e4-454a-98f3-57bd21d79342] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[10:28:17.503 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[10:28:17.508 AM]: No client config detected."}
+{"level":"INFO","message":"[10:28:17.509 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[10:28:17.509 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"INFO","message":"[10:28:17.809 AM]: Connection[id: 76e0c90d-51e4-454a-98f3-57bd21d79342] - connection established successfully after 319.41 milliseconds"}
+{"level":"INFO","message":"[10:33:40.100 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:33:40.121 AM]: Creating Connection[id: 02df3b71-48ab-42aa-b994-6edea8a0387f] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:33:40.122 AM]: Connection[id: 02df3b71-48ab-42aa-b994-6edea8a0387f] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:33:40.123 AM]: Connection[id: 02df3b71-48ab-42aa-b994-6edea8a0387f] - connection object created successfully."}
+{"level":"INFO","message":"[10:33:40.123 AM]: Connection[id: 02df3b71-48ab-42aa-b994-6edea8a0387f] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:33:40.132 AM]: Connection[id: 02df3b71-48ab-42aa-b994-6edea8a0387f] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[10:33:40.132 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[10:33:40.134 AM]: No client config detected."}
+{"level":"INFO","message":"[10:33:40.134 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[10:33:40.135 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"INFO","message":"[10:33:40.407 AM]: Connection[id: 02df3b71-48ab-42aa-b994-6edea8a0387f] - connection established successfully after 283.68 milliseconds"}
+{"level":"INFO","message":"[10:39:42.226 AM]: Creating new connection object"}
+{"level":"INFO","message":"[10:39:42.252 AM]: Creating Connection[id: 870cc1be-e315-4dfe-95e7-9fe947c9e16e] with host: gumgvsx-hlc72573.snowflakecomputing.com, account: gumgvsx-hlc72573, accessUrl: https://gumgvsx-hlc72573.snowflakecomputing.com, user: CIVICFIX_SVC, role: CIVICFIX_APP_ROLE, database: CIVICFIX, schema: RAW, warehouse: COMPUTE_WH, proxy was not configured, password is not provided, region: undefined, authenticator: SNOWFLAKE_JWT, ocsp mode: FAIL_OPEN, os: darwin, os version: 25.3.0"}
+{"level":"INFO","message":"[10:39:42.254 AM]: Connection[id: 870cc1be-e315-4dfe-95e7-9fe947c9e16e] additional details: passcode in password is provided, passcode is not provided, private key is provided, application: undefined, client name: snowflake-sdk, client version: 2.3.4, retry timeout: 300, private key path: undefined, private key pass is not provided, client store temporary credential: false, browser response timeout: 120000"}
+{"level":"INFO","message":"[10:39:42.254 AM]: Connection[id: 870cc1be-e315-4dfe-95e7-9fe947c9e16e] - connection object created successfully."}
+{"level":"INFO","message":"[10:39:42.255 AM]: Connection[id: 870cc1be-e315-4dfe-95e7-9fe947c9e16e] - connecting. Associated Snowflake domain: GLOBAL"}
+{"level":"INFO","message":"[10:39:42.263 AM]: Connection[id: 870cc1be-e315-4dfe-95e7-9fe947c9e16e] - authentication successful using: SNOWFLAKE_JWT"}
+{"level":"INFO","message":"[10:39:42.263 AM]: Trying to initialize Easy Logging"}
+{"level":"INFO","message":"[10:39:42.265 AM]: No client config detected."}
+{"level":"INFO","message":"[10:39:42.265 AM]: No config file path found. Client config will not be used."}
+{"level":"INFO","message":"[10:39:42.265 AM]: Easy Logging is disabled as no config has been found"}
+{"level":"INFO","message":"[10:39:42.943 AM]: Connection[id: 870cc1be-e315-4dfe-95e7-9fe947c9e16e] - connection established successfully after 688.25 milliseconds"}
