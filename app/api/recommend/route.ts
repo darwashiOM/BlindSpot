@@ -649,7 +649,7 @@ if (!cell) {
       const signageScore = clamp01(signage / 4) * 0.35;
 
       // Name matching: if reports in this cell are about a specific place, prefer that place
-      const match = nameMatchScore(pl.name, reportPlaceName);
+      const match = nameMatchScore(pl.name ?? undefined, reportPlaceName ?? undefined);
       const placeMatchBoost = match >= 0.75 ? 0.45 : match >= 0.45 ? 0.22 : 0;
 
       // If the cell has a different named place and this place does not match, lightly avoid "borrowing" those reviews
