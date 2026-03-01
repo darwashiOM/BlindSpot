@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { latLngToCell, gridDisk, cellToLatLng } from "h3-js";
+import { latLngToCell, gridDisk, cellToLatLng, cellToParent } from "h3-js";
 
 export const runtime = "nodejs";
 
@@ -63,7 +63,6 @@ type RecommendItem = {
 type CacheEntry = { at: number; data: any };
 const memCache = new Map<string, CacheEntry>();
 
-
 function baseUrlFromReq(req: Request) {
   const host = req.headers.get("host") || "localhost:3000";
   const proto = req.headers.get("x-forwarded-proto") || "http";
@@ -125,7 +124,7 @@ function intentConfig(intent: Intent) {
         library: 0.55,
         park: 0.35,
         mcd: 0.45,
-        community_hotspot: 0.9,
+        community_hotspot: 0.55, // lowered so it helps but doesn't dominate
       } as Record<PlaceKind, number>,
       label: "Marketplace sale",
       kindsQuery: ["police", "parking", "mall", "community_centre", "library", "cafe", "mcd"] as const,
@@ -145,7 +144,7 @@ function intentConfig(intent: Intent) {
         mcd: 0.5,
         police: 0.25,
         parking: 0.3,
-        community_hotspot: 0.75,
+        community_hotspot: 0.5, // lowered
       } as Record<PlaceKind, number>,
       label: "First date",
       kindsQuery: ["cafe", "mall", "park", "library", "community_centre", "mcd"] as const,
@@ -165,7 +164,7 @@ function intentConfig(intent: Intent) {
         community_centre: 0.55,
         park: 0.25,
         mcd: 0.45,
-        community_hotspot: 0.85,
+        community_hotspot: 0.55, // lowered
       } as Record<PlaceKind, number>,
       label: "Night walk",
       kindsQuery: ["police", "parking", "mall", "mcd", "community_centre"] as const,
@@ -184,7 +183,7 @@ function intentConfig(intent: Intent) {
       community_centre: 0.65,
       parking: 0.55,
       mcd: 0.55,
-      community_hotspot: 0.8,
+      community_hotspot: 0.55, // lowered
     } as Record<PlaceKind, number>,
     label: "Safe meetup",
     kindsQuery: ["police", "mall", "cafe", "park", "library", "community_centre", "parking", "mcd"] as const,
@@ -200,29 +199,19 @@ function safeNum(x: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
-// ✅ Updated: Community hotspots are no longer deduped away
+// Dedupes ALL kinds (including hotspots) so you don't get 3 markers on one house
 function dedupeByDistance(items: RecommendItem[], minMeters: number) {
   const out: RecommendItem[] = [];
   for (const it of items) {
-    const isHotspot = it.place.kind === "community_hotspot";
-    
-    const ok = out.every((o) => {
-      const d = haversineMeters(o.place.lat, o.place.lon, it.place.lat, it.place.lon);
-      if (d >= minMeters) return true;
-
-      // ✅ Allow hotspots to coexist even if close to another item
-      if (isHotspot || o.place.kind === "community_hotspot") return true;
-
-      return false;
-    });
-
+    const ok = out.every((o) => haversineMeters(o.place.lat, o.place.lon, it.place.lat, it.place.lon) >= minMeters);
     if (ok) out.push(it);
   }
   return out;
 }
 
 export async function POST(req: Request) {
-  const CAM_RES = 10; // Shared resolution constant
+  const CAM_RES = 10; // cameras + scoring resolution
+  const HOTSPOT_RES = 9; // merge nearby report cells so hotspots don't spam
   const baseUrl = baseUrlFromReq(req);
 
   let body: RecommendRequest | null = null;
@@ -237,8 +226,7 @@ export async function POST(req: Request) {
   const text = String(body?.text || "").slice(0, 800);
   const lat = Number(body?.lat);
   const lon = Number(body?.lon);
-  
-  // ✅ Patched: maxResults limit increased to 30
+
   const maxResults = Math.max(1, Math.min(30, Number(body?.maxResults || 5)));
 
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
@@ -261,30 +249,40 @@ export async function POST(req: Request) {
   const bbox = metersToBBox(lat, lon, cfg.radiusM);
   const bboxParam = bboxToParam(bbox);
 
-  const allowedKinds = (cfg.kindsQuery as readonly string[])
-    .filter((k) => !exclude.has(k as PlaceKind));
+  const communityEnabled = !exclude.has("community_hotspot");
 
-  const kindsParam = allowedKinds.join(",");
+  const allowedKinds = (cfg.kindsQuery as readonly string[]).filter((k) => !exclude.has(k as PlaceKind));
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
 
   try {
-    const [placesRes, camsRes, repRes] = await Promise.all([
-      fetch(`${baseUrl}/api/places?bbox=${encodeURIComponent(bboxParam)}&kinds=${encodeURIComponent(kindsParam)}`, { signal: controller.signal }),
-      fetch(`${baseUrl}/api/cameras?bbox=${encodeURIComponent(bboxParam)}`, { signal: controller.signal }),
-      // ✅ Patched: Added res=CAM_RES to matching logic
-      fetch(`${baseUrl}/api/report?bbox=${encodeURIComponent(bboxParam)}&res=${CAM_RES}`, { signal: controller.signal }),
+    // If the user excluded all place kinds, do NOT call /api/places with empty kinds
+    const placesPromise =
+      allowedKinds.length === 0
+        ? Promise.resolve({ places: [] as Place[] })
+        : fetch(`${baseUrl}/api/places?bbox=${encodeURIComponent(bboxParam)}&kinds=${encodeURIComponent(allowedKinds.join(","))}`, {
+            signal: controller.signal,
+          })
+            .then((r) => r.json().catch(() => ({})))
+            .then((j) => ({ places: (Array.isArray(j?.places) ? j.places : []) as Place[] }))
+            .catch(() => ({ places: [] as Place[] }));
+
+    const [placesWrap, camsJson, repJson] = await Promise.all([
+      placesPromise,
+      fetch(`${baseUrl}/api/cameras?bbox=${encodeURIComponent(bboxParam)}`, { signal: controller.signal })
+        .then((r) => r.json().catch(() => ({})))
+        .catch(() => ({})),
+      fetch(`${baseUrl}/api/report?bbox=${encodeURIComponent(bboxParam)}&res=${CAM_RES}`, { signal: controller.signal })
+        .then((r) => r.json().catch(() => ({})))
+        .catch(() => ({})),
     ]);
 
-    const placesJson = await placesRes.json().catch(() => ({}));
-    const camsJson = await camsRes.json().catch(() => ({}));
-    const repJson = await repRes.json().catch(() => ({}));
-
-    const places: Place[] = Array.isArray(placesJson?.places) ? placesJson.places : [];
+    const places: Place[] = placesWrap.places || [];
     const cameras: CameraPt[] = Array.isArray(camsJson?.points) ? camsJson.points : [];
     const reportCells: ReportCell[] = Array.isArray(repJson?.cells) ? repJson.cells : [];
 
+    // Camera counts per CAM_RES cell
     const camCounts = new Map<string, number>();
     for (const p of cameras) {
       const plat = Number(p?.lat);
@@ -294,28 +292,71 @@ export async function POST(req: Request) {
       camCounts.set(h3, (camCounts.get(h3) || 0) + 1);
     }
 
+    // Report map by CAM_RES cell (same res as scoring)
     const repMap = new Map<string, ReportCell>();
     for (const c of reportCells) {
       if (!c?.h3_index) continue;
       repMap.set(c.h3_index, c);
     }
 
+    // Build merged hotspots so one building does not create 2 to 3 hotspot points
     const hotspots: Place[] = [];
-    for (const c of reportCells) {
-      const yes = safeNum(c?.camera_present_count);
-      const no = safeNum(c?.camera_absent_count);
+    if (communityEnabled) {
+      type HotAgg = {
+  yes: number;
+  no: number;
+  count: number;
+  bestChild: string;   // CAM_RES-ish child cell that has strongest "yes"
+  bestYes: number;
+};
 
-      const [centerLat, centerLon] = cellToLatLng(c.h3_index);
-      const d = haversineMeters(lat, lon, centerLat, centerLon);
-      if (d > cfg.maxDistanceM * 1.05) continue;
+const agg = new Map<string, HotAgg>();
 
-      hotspots.push({
-        id: `community/${c.h3_index}`,
-        kind: "community_hotspot",
-        name: yes >= 5 ? "Community confirmed camera area" : "Community reported camera area",
-        lat: centerLat,
-        lon: centerLon,
-      });
+for (const c of reportCells) {
+  const yes = safeNum(c?.camera_present_count);
+  const no = safeNum(c?.camera_absent_count);
+
+  // Safety mode hotspot: require at least 2 "yes" reports
+  if (yes < 2) continue;
+
+  const child = c.h3_index; // this is the report cell returned at res=CAM_RES
+  let parent = child;
+  try {
+    parent = cellToParent(child, HOTSPOT_RES);
+  } catch {}
+
+  const prev = agg.get(parent);
+  if (!prev) {
+    agg.set(parent, { yes, no, count: 1, bestChild: child, bestYes: yes });
+  } else {
+    prev.yes += yes;
+    prev.no += no;
+    prev.count += 1;
+
+    // pick a child cell that best represents this hotspot
+    if (yes > prev.bestYes) {
+      prev.bestYes = yes;
+      prev.bestChild = child;
+    }
+  }
+}
+
+for (const [parent, a] of agg.entries()) {
+  // IMPORTANT: place the hotspot at the best CHILD cell center,
+  // so repMap(placeH3) hits the cell with your votes.
+  const [centerLat, centerLon] = cellToLatLng(a.bestChild);
+
+  const d = haversineMeters(lat, lon, centerLat, centerLon);
+  if (d > cfg.maxDistanceM * 1.05) continue;
+
+  hotspots.push({
+    id: `community/${parent}`, // keep id stable
+    kind: "community_hotspot",
+    name: a.yes >= 5 ? "Community confirmed camera area" : "Community reported camera area",
+    lat: centerLat,
+    lon: centerLon,
+  });
+}
     }
 
     const scored: RecommendItem[] = [];
@@ -350,28 +391,38 @@ export async function POST(req: Request) {
       else if (no >= 2) repScore -= 0.35;
       else if (no >= 1) repScore -= 0.15;
 
-      const conflictPenalty = conflict ? 0.55 : 0;
-      const typeW = cfg.kindWeight[pl.kind] ?? 0.5;
       const isHotspot = pl.kind === "community_hotspot";
+      const conflictPenalty = conflict ? 0.55 : 0;
+
+      const typeW = cfg.kindWeight[pl.kind] ?? 0.5;
+
+      // Hotspots should help, not auto-win
+      const typeFactor = isHotspot ? 1.2 : 2.0;
+      const distFactor = 2.0;
+      const camFactor = isHotspot ? 1.0 : 1.8;
+      const repFactor = isHotspot ? 1.4 : 2.0;
 
       const evidenceBoost =
-        (camsK1 >= 1 ? 0.35 : 0) +
-        (yes >= 1 ? 0.35 : 0);   
+        (camsK1 >= 1 ? (isHotspot ? 0.18 : 0.35) : 0) + (yes >= 1 ? (isHotspot ? 0.18 : 0.35) : 0);
+
+      // If a hotspot has weak nearby camera signal, slightly downgrade it
+      const weakHotspotPenalty = isHotspot && camsK1 === 0 && yes < 5 ? 0.45 : 0;
 
       const score =
-        typeW * 2.0 +
-        distScore * 2.0 +
-        camScore * (isHotspot ? 1.2 : 1.8) +
-        repScore * (isHotspot ? 2.6 : 2.0) -
+        typeW * typeFactor +
+        distScore * distFactor +
+        camScore * camFactor +
+        repScore * repFactor -
         conflictPenalty +
-        evidenceBoost;
+        evidenceBoost -
+        weakHotspotPenalty;
 
       const reasons: string[] = [];
 
-      if (pl.kind === "community_hotspot") {
+      if (isHotspot) {
         reasons.push(yes >= 5 ? "Community confirmed camera presence" : "Community reports camera presence");
       } else {
-        reasons.push(`Type: ${pl.kind.replace("_", " ")}`);
+        reasons.push(`Type: ${pl.kind.replaceAll("_", " ")}`);
       }
 
       if (yes >= 5) reasons.push("High community confidence");
@@ -401,84 +452,97 @@ export async function POST(req: Request) {
       if (!pl || !Number.isFinite(pl.lat) || !Number.isFinite(pl.lon)) continue;
       scorePlace(pl);
     }
-
     for (const h of hotspots) scorePlace(h);
 
     scored.sort((a, b) => b.score - a.score);
 
-    const deduped = dedupeByDistance(scored, 250);
+    // If user excluded all place kinds, return hotspots only (or empty if community disabled)
+    if (allowedKinds.length === 0) {
+      const onlyHotspots = communityEnabled ? dedupeByDistance(scored.filter((x) => x.place.kind === "community_hotspot"), 250) : [];
+      const payload = {
+        intent,
+        intentLabel: cfg.label,
+        bbox: bboxParam,
+        results: onlyHotspots.slice(0, maxResults),
+        meta: {
+          placesFetched: places.length,
+          camerasFetched: cameras.length,
+          reportCellsFetched: reportCells.length,
+          hotspotCandidates: hotspots.length,
+          allowedKinds,
+          communityEnabled,
+        },
+        note: communityEnabled
+          ? "Community-only mode: showing community hotspot candidates."
+          : "All place kinds excluded and community disabled, returning no results.",
+      };
 
-    const FE_KINDS: PlaceKind[] = [
-  "community_hotspot",
-  "community_centre",
-  "park",
-  "cafe",
-  "library",
-  "mall",
-  "mcd",
-  "police",
-];
+      memCache.set(cacheKey, { at: now, data: payload });
+      return NextResponse.json(payload, { status: 200 });
+    }
 
-const enabledFromFE = FE_KINDS.filter((k) => !exclude.has(k));
-const communityOnly = enabledFromFE.length === 1 && enabledFromFE[0] === "community_hotspot";
+    // Diversity selection: cap hotspots so they do not take over the list
+    const maxHotspots = communityEnabled ? Math.min(2, Math.ceil(maxResults / 3)) : 0;
 
-if (communityOnly) {
-  const onlyHotspots = deduped.filter((x) => x.place.kind === "community_hotspot");
-  const payload = {
-    intent,
-    intentLabel: cfg.label,
-    bbox: bboxParam,
-    results: onlyHotspots.slice(0, maxResults),
-    meta: {
-      placesFetched: places.length,
-      camerasFetched: cameras.length,
-      reportCellsFetched: reportCells.length,
-      hotspotCandidates: hotspots.length,
-    },
-    note: "Community-only mode: showing only community hotspot candidates.",
-  };
+    const hotspotsSorted = dedupeByDistance(
+        scored.filter((x) => x.place.kind === "community_hotspot"),
+        250
+        );
 
-  memCache.set(cacheKey, { at: now, data: payload });
-  return NextResponse.json(payload, { status: 200 });
-}
+        const othersSorted = dedupeByDistance(
+        scored.filter((x) => x.place.kind !== "community_hotspot"),
+        250
+        );
 
-    const hasEvidence = (x: RecommendItem) =>
-      x.cameras_in_k1 > 0 || x.report_yes > 0 || x.place.kind === "community_hotspot";
+    const hasEvidence = (x: RecommendItem) => x.cameras_in_k1 > 0 || x.report_yes > 0;
+    const primary = othersSorted.filter(hasEvidence);
+    const secondary = othersSorted.filter((x) => !hasEvidence(x));
 
-    const primary = deduped.filter(hasEvidence);
-    const secondary = deduped.filter((x) => !hasEvidence(x));
+    const top: RecommendItem[] = [];
+    const used = new Set<string>();
 
-    const primaryGood = primary.filter((x) => x.score >= 0);
-    const top: RecommendItem[] = primaryGood.slice(0, maxResults);
+    // Add a few hotspots (optional signal)
+    for (const h of hotspotsSorted) {
+      if (top.length >= maxHotspots) break;
+      if (used.has(h.place.id)) continue;
+      top.push(h);
+      used.add(h.place.id);
+    }
 
-    if (top.length < maxResults) {
-      const used = new Set(top.map((x) => x.place.id));
-      const fillFrom = [...primary, ...secondary];
+    // Then real places, prioritized by evidence
+    for (const it of primary) {
+      if (top.length >= maxResults) break;
+      if (used.has(it.place.id)) continue;
+      top.push(it);
+      used.add(it.place.id);
+    }
 
-      for (const it of fillFrom) {
-        if (top.length >= maxResults) break;
-        if (used.has(it.place.id)) continue;
-        top.push(it);
-        used.add(it.place.id);
-      }
+    // Fill any remaining slots
+    for (const it of secondary) {
+      if (top.length >= maxResults) break;
+      if (used.has(it.place.id)) continue;
+      top.push(it);
+      used.add(it.place.id);
     }
 
     const payload = {
       intent,
       intentLabel: cfg.label,
       bbox: bboxParam,
-      results: top,
+      results: top.slice(0, maxResults),
       meta: {
         placesFetched: places.length,
         camerasFetched: cameras.length,
         reportCellsFetched: reportCells.length,
         hotspotCandidates: hotspots.length,
+        allowedKinds,
+        communityEnabled,
+        maxHotspots,
       },
-      note: "Recommendations prioritize community-confirmed camera presence and public meetup-friendly places.",
+      note: "Recommendations prioritize meetup-friendly places. Community hotspots are capped so they do not dominate.",
     };
 
     memCache.set(cacheKey, { at: now, data: payload });
-
     return NextResponse.json(payload, { status: 200 });
   } catch (e: any) {
     return NextResponse.json({ error: String(e?.message || e), intent }, { status: 200 });

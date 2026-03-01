@@ -72,6 +72,53 @@ function getCameraCountsForH3(points: Pt[], h3Index: string, res: number, k = 1)
   return { inCell, nearby };
 }
 
+function getNearbyReportStatsForTts(
+  reportCells: Array<{
+    h3_index: string;
+    camera_present_count: number;
+    camera_absent_count: number;
+    signage_count: number;
+    summary?: string;
+    signage_text?: string;
+  }>,
+  centerH3: string,
+  k: number
+) {
+  const ring = new Set(gridDisk(centerH3, k));
+
+  let yes = 0;
+  let no = 0;
+  let signage = 0;
+
+  // pick the "best" summary among nearby cells (the one with most evidence)
+  let bestSummary: string | null = null;
+  let bestWeight = -1;
+
+  let matchedCells = 0;
+
+  for (const c of reportCells) {
+    if (!ring.has(c.h3_index)) continue;
+
+    matchedCells += 1;
+
+    const cy = Number(c.camera_present_count || 0);
+    const cn = Number(c.camera_absent_count || 0);
+    const cs = Number(c.signage_count || 0);
+
+    yes += cy;
+    no += cn;
+    signage += cs;
+
+    const weight = cy + cn + cs;
+    if (c.summary && weight > bestWeight) {
+      bestWeight = weight;
+      bestSummary = c.summary;
+    }
+  }
+
+  return { yes, no, signage, bestSummary, matchedCells };
+}
+
 function kindLabel(k: PlaceKind) {
   if (k === "community_hotspot") return "Community confirmed area";
   if (k === "police") return "Police station";
@@ -165,19 +212,27 @@ export default function Home() {
     community_hotspot: true,
   }));
 
+
   const enabledKinds = useMemo(() => PLACE_KINDS.filter((k) => kindEnabled[k]), [kindEnabled]);
 
+// Only real place kinds should be fetched from /api/places.
+  // community_hotspot is NOT a DB "place", it comes from reports.
+  const enabledPlaceKinds = useMemo(
+    () => enabledKinds.filter((k) => k !== "community_hotspot"),
+    [enabledKinds]
+  );
   const disabledKinds = useMemo(() => PLACE_KINDS.filter((k) => !kindEnabled[k]), [kindEnabled]);
 
   const [viewState, setViewState] = useState({
     longitude: -75.75,
     latitude: 39.68,
-    zoom: 8,
+    zoom: 15,
     bearing: 0,
     pitch: 0,
   });
 
-  const reportRes = viewState.zoom >= 15 ? 12 : viewState.zoom >= 12 ? 10 : 8;
+  const reportRes = 12;
+  const READ_REPORT_K = 4; 
 
   const pickRes = reportRes;
   const mode = "safety";
@@ -231,7 +286,7 @@ export default function Home() {
     borderRight: "1px solid rgba(255,255,255,0.12)",
     boxShadow: "4px 0 24px rgba(0,0,0,0.35)",
     overflowY: "auto",
-    zIndex: 10,
+    zIndex: 12,
   };
 
   const btn = (active?: boolean): React.CSSProperties => ({
@@ -312,26 +367,40 @@ export default function Home() {
     return voices.find((v) => v.lang?.startsWith("en-US")) || voices.find((v) => v.lang?.startsWith("en-GB")) || voices[0] || null;
   }
 
-  function buildTtsSummaryText(opts: { reportSummary?: string | null; reportCount: number; camerasInCell: number; camerasNearby: number }) {
-    const { reportSummary, reportCount, camerasInCell, camerasNearby } = opts;
+function buildTtsSummaryText(opts: {
+  reportSummary?: string | null;
+  reportYes: number;
+  reportNo: number;
+  matchedCells: number;
+  camerasInCell: number;
+  camerasNearby: number;
+}) {
+  const { reportSummary, reportYes, reportNo, matchedCells, camerasInCell, camerasNearby } = opts;
 
-    const communityLine =
-      reportCount === 0
-        ? "No community reports yet."
-        : reportSummary && reportSummary.trim()
-          ? reportSummary.trim()
-          : "People have reported in this area, but there is no summary yet.";
+  const reportTotal = reportYes + reportNo;
 
-    const mapLine =
-      camerasInCell > 0
-        ? "Map data shows camera markers right here."
-        : camerasNearby > 0
-          ? "Map data shows camera markers nearby."
-          : "Map data does not show any camera markers here.";
+  const communityLine =
+    reportTotal === 0
+      ? "No community reports nearby."
+      : `In the nearby area, ${reportYes} people reported cameras, and ${reportNo} reported no cameras.`;
 
-    const full = `${communityLine} ${mapLine}`.replace(/\s+/g, " ").trim();
-    return full.slice(0, 240);
-  }
+  const summaryLine =
+    reportSummary && reportSummary.trim()
+      ? `Summary: ${reportSummary.trim()}`
+      : reportTotal > 0
+        ? "People have reported here, but there is no summary yet."
+        : "";
+
+  const mapLine =
+    camerasInCell > 0
+      ? "Map data shows camera markers right here."
+      : camerasNearby > 0
+        ? "Map data shows camera markers nearby."
+        : "Map data does not show any camera markers here.";
+
+  const full = `${communityLine} ${summaryLine} ${mapLine}`.replace(/\s+/g, " ").trim();
+  return full.slice(0, 240);
+}
 
   async function speakBrowser(text: string) {
     const ensureVoices = () =>
@@ -433,10 +502,10 @@ export default function Home() {
 
     // Read zoom from the map so refresh is never blocked by stale React state
     const zoomNow = Number(map.getZoom());
-    const reportResNow = zoomNow >= 15 ? 12 : zoomNow >= 12 ? 10 : 8;
+    const reportResNow = 12;
 
     try {
-      const wantPlaces = zoomNow >= 12;
+      const wantPlaces = 12;
 
       // only cameras + reports in parallel
       const [camsRes, repRes] = await Promise.all([
@@ -466,7 +535,7 @@ export default function Home() {
       if (wantPlaces) {
         await loadPlacesSequentially({
           bbox,
-          enabledKinds,
+          enabledKinds: enabledPlaceKinds,
           signal: controller.signal,
           seq: mySeq,
         });
@@ -567,9 +636,12 @@ export default function Home() {
     };
   }, [hovered]);
 
-  const recLayerData = useMemo(() => {
-    return recommendations.map((r) => r.place);
-  }, [recommendations]);
+const recLayerData = useMemo(() => {
+  return recommendations
+    .map((r) => r.place)
+    .filter((p) => Boolean(kindEnabled[p.kind as PlaceKind]));
+}, [recommendations, kindEnabled]);
+
 
   const layers = useMemo(() => {
     if (booting) return [];
@@ -590,7 +662,7 @@ export default function Home() {
     );
 
     if (places && places.length > 0) {
-      const placeRadius = viewState.zoom >= 16 ? 22 : viewState.zoom >= 14 ? 28 : 34;
+      const placeRadius = 12;
 
       const filteredPlaces = places.filter((p) => kindEnabled[p.kind]);
       mapLayers.push(
@@ -609,6 +681,40 @@ export default function Home() {
       );
     }
 
+    const showCommunityReports = kindEnabled.community_hotspot; // or make a separate toggle if you want
+
+if (showCommunityReports) {
+  mapLayers.push(
+    new GeoJsonLayer({
+      id: "community-reports",
+      data: reportGeo as any,
+      pickable: true,
+      stroked: true,
+      filled: true,
+      getLineColor: [0, 0, 0, 170],
+      getFillColor: (f: any) => {
+        const yes = f.properties.camera_present_count || 0;
+        const no = f.properties.camera_absent_count || 0;
+
+        const conflict = yes > 0 && no > 0;
+        if (conflict) return [255, 0, 255, 160];
+
+        if (yes >= 5) return [140, 0, 255, 180];
+        if (yes >= 2) return [255, 140, 0, 165];
+        if (yes >= 1) return [255, 235, 0, 155];
+
+        if (no >= 5) return [255, 0, 0, 190];
+        if (no >= 2) return [255, 60, 60, 150];
+        if (no >= 1) return [255, 120, 120, 120];
+
+        return [0, 0, 0, 0];
+      },
+      lineWidthMinPixels: 2,
+    })
+  );
+
+}
+
     if (recLayerData.length > 0) {
       mapLayers.push(
         new ScatterplotLayer<Place>({
@@ -626,7 +732,7 @@ export default function Home() {
       );
     }
 
-    const cameraRadius = viewState.zoom >= 17 ? 18 : viewState.zoom >= 15 ? 28 : 60;
+    const cameraRadius = 12;
 
     if (viewState.zoom >= 13 && points && points.length > 0 && mode === "safety") {
       const validPoints = points.filter((p) => p.lat != null && p.lon != null);
@@ -653,34 +759,6 @@ export default function Home() {
       }
     }
 
-    mapLayers.push(
-      new GeoJsonLayer({
-        id: "community-reports",
-        data: reportGeo as any,
-        pickable: true,
-        stroked: true,
-        filled: true,
-        getLineColor: [0, 0, 0, 170],
-        getFillColor: (f: any) => {
-          const yes = f.properties.camera_present_count || 0;
-          const no = f.properties.camera_absent_count || 0;
-
-          const conflict = yes > 0 && no > 0;
-          if (conflict) return [255, 0, 255, 160];
-
-          if (yes >= 5) return [140, 0, 255, 180];
-          if (yes >= 2) return [255, 140, 0, 165];
-          if (yes >= 1) return [255, 235, 0, 155];
-
-          if (no >= 5) return [255, 0, 0, 190];
-          if (no >= 2) return [255, 60, 60, 150];
-          if (no >= 1) return [255, 120, 120, 120];
-
-          return [0, 0, 0, 0];
-        },
-        lineWidthMinPixels: 2,
-      })
-    );
 
     mapLayers.push(
       new GeoJsonLayer({
@@ -695,6 +773,9 @@ export default function Home() {
         parameters: { depthTest: false },
       })
     );
+
+    
+
 
     return mapLayers;
   }, [booting, points, places, reportCells, selected, hovered, viewState.zoom, mode, recLayerData, kindEnabled, hoveredGeo, reportGeo, selectedGeo]);
@@ -790,7 +871,7 @@ export default function Home() {
                             ...v,
                             latitude: r.place.lat,
                             longitude: r.place.lon,
-                            zoom: Math.max(v.zoom, 15),
+                            zoom: Math.max(v.zoom, 12),
                             transitionDuration: 900,
                             transitionInterpolator: new FlyToInterpolator(),
                           }));
@@ -891,15 +972,15 @@ export default function Home() {
 
             {(() => {
               const cellData = reportCells.find((c) => c.h3_index === selected.report_h3);
-              const totalCount = Math.max(cellData?.camera_present_count || 0, cellData?.camera_absent_count || 0);
-              if (totalCount >= 5) {
+              const yesCount = cellData?.camera_present_count || 0;
+
+              if (yesCount >= 5) {
                 return (
                   <div style={{ fontSize: 13, color: "#a855f7", fontWeight: "bold", marginTop: 4 }}>
-                    ✓ Community confirmed
+                    ✓ Community confirmed camera area
                   </div>
                 );
               }
-              return null;
             })()}
 
             <textarea
@@ -949,7 +1030,7 @@ export default function Home() {
                   style={{
                     marginTop: 8,
                     width: "100%",
-                    borderRadius: 10,
+                    borderRadius: 12,
                     border: "1px solid rgba(255,255,255,0.15)",
                   }}
                 />
@@ -1054,13 +1135,19 @@ export default function Home() {
                   try {
                     setLastError(null);
 
-                    const cell = reportCells.find((c) => c.h3_index === selected.report_h3);
-                    const reportCount = (cell?.camera_present_count || 0) + (cell?.camera_absent_count || 0);
-                    const { inCell, nearby } = getCameraCountsForH3(points, selected.report_h3, reportRes, 1);
+                    const center = selected.report_h3;
+
+                    // wider radius for reports only
+                    const stats = getNearbyReportStatsForTts(reportCells, center, READ_REPORT_K);
+
+                    // keep cameras radius the same as before
+                    const { inCell, nearby } = getCameraCountsForH3(points, center, reportRes, 1);
 
                     const ttsText = buildTtsSummaryText({
-                      reportSummary: cell?.summary ?? null,
-                      reportCount,
+                      reportSummary: stats.bestSummary ?? null,
+                      reportYes: stats.yes,
+                      reportNo: stats.no,
+                      matchedCells: stats.matchedCells,
                       camerasInCell: inCell,
                       camerasNearby: nearby,
                     });
@@ -1105,25 +1192,29 @@ export default function Home() {
             const active = s.isDragging || s.isPanning || s.isZooming || s.isRotating;
             if (!active) scheduleRefresh(300);
           }}
-          onHover={(info: any) => {
+          
+
+          onHover={(info) => {
+            const pickResUi = 12;
             if (!info?.viewport) return;
-
             const [lon, lat] = info.viewport.unproject([info.x, info.y]);
-            const h3Pick = latLngToCell(lat, lon, pickRes);
 
-            if (hovered?.h3 === h3Pick) return;
+            const reportH3 = latLngToCell(lat, lon, reportRes);   // data cell
+            const uiH3 = latLngToCell(lat, lon, pickResUi);       // bigger highlight cell
 
-            const [centerLat, centerLon] = cellToLatLng(h3Pick);
-            setHovered({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Pick });
+            const [centerLat, centerLon] = cellToLatLng(reportH3);
+            setHovered({ lat: centerLat, lon: centerLon, h3: uiH3, report_h3: reportH3 });
           }}
           onClick={(info: any) => {
+            const pickResUi = 12;
             if (!info?.viewport) return;
-
             const [lon, lat] = info.viewport.unproject([info.x, info.y]);
-            const h3Pick = latLngToCell(lat, lon, pickRes);
-            const [centerLat, centerLon] = cellToLatLng(h3Pick);
 
-            setSelected({ lat: centerLat, lon: centerLon, h3: h3Pick, report_h3: h3Pick });
+            const reportH3 = latLngToCell(lat, lon, reportRes); // data cell (reports)
+            const uiH3 = latLngToCell(lat, lon, pickResUi);     // highlight cell
+
+            const [centerLat, centerLon] = cellToLatLng(reportH3); // center of report cell
+            setSelected({ lat: centerLat, lon: centerLon, h3: uiH3, report_h3: reportH3 });
           }}
         >
           <Map

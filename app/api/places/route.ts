@@ -59,7 +59,7 @@ function parseKindsParam(kindsRaw: string | null): PlaceKind[] {
   for (const p of parts) {
     if ((ALL_KINDS as string[]).includes(p)) out.push(p as PlaceKind);
   }
-  return out.length ? out : ALL_KINDS;
+  return out;
 }
 
 export async function GET(req: Request) {
@@ -67,10 +67,16 @@ export async function GET(req: Request) {
   const bbox = parseBBoxParam(searchParams.get("bbox"));
 
   const kindRaw = searchParams.get("kind");
-  const kinds =
-    kindRaw && (ALL_KINDS as string[]).includes(kindRaw)
-      ? ([kindRaw as PlaceKind] as PlaceKind[])
-      : parseKindsParam(searchParams.get("kinds"));
+
+// If "kind" is provided but invalid, return empty instead of falling back to ALL.
+if (kindRaw && !(ALL_KINDS as string[]).includes(kindRaw)) {
+  return NextResponse.json({ places: [], error: "bad_kind" }, { status: 200 });
+}
+
+const kinds =
+  kindRaw && (ALL_KINDS as string[]).includes(kindRaw)
+    ? ([kindRaw as PlaceKind] as PlaceKind[])
+    : parseKindsParam(searchParams.get("kinds"));
 
   if (!bbox) {
     return NextResponse.json({ places: [], error: "bad_bbox" }, { status: 200 });
