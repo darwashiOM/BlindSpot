@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { Pool } from "pg";
-import { ai } from "@/lib/gemini";
+import { getGemini } from "@/lib/gemini";
 import { LRUCache } from "lru-cache";
 import { latLngToCell, cellToParent } from "h3-js";
 
@@ -115,6 +115,7 @@ out tags 25;
 
 // GET /api/report?bbox=south,west,north,east&res=10
 export async function GET(req: Request) {
+    const ai = getGemini();
   try {
     const url = new URL(req.url);
     const parsed = getSchema.safeParse({
@@ -221,6 +222,7 @@ export async function GET(req: Request) {
 
 // POST /api/report
 export async function POST(req: Request) {
+    const ai = getGemini();
   try {
     const body = await req.json().catch(() => null);
     const parsed = postSchema.safeParse(body);

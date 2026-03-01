@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { latLngToCell, gridDisk, cellToLatLng, cellToParent } from "h3-js";
-import { ai } from "@/lib/gemini";
+import { getGemini } from "@/lib/gemini";
 
 export const runtime = "nodejs";
 
@@ -211,14 +211,8 @@ function dedupeByDistance(items: RecommendItem[], minMeters: number) {
 }
 
 
-async function aiRerankResults(opts: {
-  text: string;
-  intentLabel: string;
-  userLat: number;
-  userLon: number;
-  items: RecommendItem[];
-}) {
-  const { text, intentLabel, userLat, userLon, items } = opts;
+async function aiRerankResults(opts: { ai: any; text: string; intentLabel: string; userLat: number; userLon: number; items: RecommendItem[] }) {
+  const { ai, text, intentLabel, userLat, userLon, items } = opts;
 
   // If there are 0 or 1 candidates, reranking is pointless
   if (items.length <= 1) {
@@ -312,6 +306,7 @@ async function aiRerankResults(opts: {
 
 
 export async function POST(req: Request) {
+  const ai = getGemini();
   const CAM_RES = 10; // cameras + scoring resolution
   const HOTSPOT_RES = 9; // merge nearby report cells so hotspots don't spam
   const baseUrl = baseUrlFromReq(req);
@@ -632,6 +627,7 @@ let aiRerankUsed = false;
 
 try {
   const rr = await aiRerankResults({
+    ai,
     text,
     intentLabel: cfg.label,
     userLat: lat,
