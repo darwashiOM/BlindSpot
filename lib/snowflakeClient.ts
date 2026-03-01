@@ -85,18 +85,18 @@ async function execInternal<T = Row>(sqlText: string, binds: any[] = []) {
 
   return await new Promise<T[]>((resolve, reject) => {
     conn.execute({
-      sqlText,
-      binds,
-      complete: (err: any, _stmt: any, rows: T[]) => {
-        if (err) {
-          const msg = String(err?.message || err).toLowerCase();
-          if (msg.includes("terminated") || msg.includes("closed")) connPromise = null;
-          reject(err);
-          return;
-        }
-        resolve(rows || []);
-      },
-    });
+        sqlText,
+        binds,
+        complete: (err: any, _stmt: any, rows?: any[]) => {
+            if (err) {
+            const msg = String(err?.message || err).toLowerCase();
+            if (msg.includes("terminated") || msg.includes("closed")) connPromise = null;
+            reject(err);
+            return;
+            }
+            resolve(((rows ?? []) as unknown) as T[]);
+        },
+        });
   });
 }
 
