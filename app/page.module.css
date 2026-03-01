@@ -1,6 +1,7 @@
 /* app/page.module.css */
 
 :root {
+    --panelW: 380px;
   --bg: #070a0f;
   --panel: rgba(12, 16, 22, 0.78);
   --panel2: rgba(12, 16, 22, 0.92);
@@ -33,7 +34,9 @@
   z-index: 20;
   top: 12px;
   left: 12px;
-  right: 12px;
+
+  /* match the left panel width */
+  width: var(--panelW);
 
   display: flex;
   align-items: center;
@@ -46,6 +49,18 @@
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
   backdrop-filter: blur(14px);
+
+  /* this lets you drag the map through empty bar space */
+  pointer-events: none;
+
+  /* keep everything inside the pill */
+  overflow: hidden;
+}
+
+.brand,
+.actions,
+.btn {
+  pointer-events: auto;
 }
 
 .brand {
@@ -70,12 +85,17 @@
   display: flex;
   gap: 8px;
   align-items: center;
-  flex-wrap: wrap;
-}
 
+  flex-wrap: nowrap;
+  white-space: nowrap;
+
+  overflow-x: auto;
+  max-width: 60%;
+}
 /* Buttons */
 .btn {
   padding: 8px 10px;
+  white-space: nowrap;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.06);
@@ -108,6 +128,7 @@
 
 /* Floating panel / bottom sheet */
 .panel {
+  transition: transform 220ms ease, opacity 180ms ease;
   position: absolute;
   z-index: 15;
   top: 78px;
@@ -122,6 +143,12 @@
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
   backdrop-filter: blur(14px);
+}
+
+.panelClosed {
+  transform: translateX(-120%);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .panelHeader {
@@ -325,4 +352,23 @@
     width: auto;
     max-height: 55vh;
   }
+
+  .panelClosed {
+    transform: translateY(120%);
+  }
+
+  .brandSub {
+  display: none;
+}
+
+.btn {
+  padding: 7px 8px;
+  font-size: 11px;
+  border-radius: 10px;
+}
+
+.actions {
+  gap: 6px;
+  max-width: 75%;
+}
 }

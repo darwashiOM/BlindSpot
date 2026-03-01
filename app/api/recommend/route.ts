@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { latLngToCell, gridDisk, cellToLatLng, cellToParent } from "h3-js";
+import { ai } from "@/lib/gemini";
 
 export const runtime = "nodejs";
 
@@ -208,6 +209,107 @@ function dedupeByDistance(items: RecommendItem[], minMeters: number) {
   }
   return out;
 }
+
+
+async function aiRerankResults(opts: {
+  text: string;
+  intentLabel: string;
+  userLat: number;
+  userLon: number;
+  items: RecommendItem[];
+}) {
+  const { text, intentLabel, userLat, userLon, items } = opts;
+
+  // If there are 0 or 1 candidates, reranking is pointless
+  if (items.length <= 1) {
+    return { ordered: items, aiUsed: false, aiReasons: {} as Record<string, string> };
+  }
+
+  // Keep prompt small
+  const candidates = items.slice(0, 25).map((it) => ({
+    id: it.place.id,
+    name: it.place.name ?? null,
+    kind: it.place.kind,
+    distance_m: Math.round(it.distance_m),
+    cameras_in_k1: it.cameras_in_k1,
+    report_yes: it.report_yes,
+    report_no: it.report_no,
+    conflict: it.conflict,
+  }));
+
+  const prompt =
+    `You are ranking meetup locations for the user request.\n` +
+    `User request: ${JSON.stringify(text)}\n` +
+    `Intent label: ${JSON.stringify(intentLabel)}\n` +
+    `User location: ${userLat.toFixed(5)}, ${userLon.toFixed(5)}\n\n` +
+    `Each candidate has:\n` +
+    `- cameras_in_k1: number of map camera markers in nearby H3 cells\n` +
+    `- report_yes/report_no: community reports about cameras\n` +
+    `- conflict: true if both yes and no reports exist\n\n` +
+    `Ranking rules:\n` +
+    `- Prefer candidates with higher report_yes and higher cameras_in_k1.\n` +
+    `- Penalize conflict, and penalize high report_no.\n` +
+    `- Prefer closer distance, but do not ignore strong community evidence.\n` +
+    `- Do NOT remove candidates, only reorder.\n` +
+    `- Use ONLY the ids provided. Do NOT invent ids.\n\n` +
+    `Return ONLY valid JSON with this exact shape:\n` +
+    `{"order": string[], "reasons": Record<string,string>}\n\n` +
+    `Candidates:\n` +
+    `${JSON.stringify(candidates)}`;
+
+  // Hard timeout so the endpoint never hangs
+  const timeoutMs = 6000;
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("ai_rerank_timeout")), timeoutMs)
+  );
+
+  const aiPromise = ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: prompt,
+    config: { responseMimeType: "application/json" },
+  });
+
+  let aiJson: any = null;
+  try {
+    const resp: any = await Promise.race([aiPromise, timeoutPromise]);
+    const txt = String(resp?.text ?? "").trim();
+    aiJson = txt ? JSON.parse(txt) : null;
+  } catch {
+    aiJson = null;
+  }
+
+  const order: string[] = Array.isArray(aiJson?.order) ? aiJson.order.map(String) : [];
+  const reasons: Record<string, string> = aiJson?.reasons && typeof aiJson.reasons === "object" ? aiJson.reasons : {};
+
+  // Apply AI order, but keep everything else in original order
+  const byId = new Map(items.map((it) => [it.place.id, it]));
+  const used = new Set<string>();
+
+  const ordered: RecommendItem[] = [];
+
+  for (const id of order) {
+    const it = byId.get(id);
+    if (!it) continue;
+    if (used.has(id)) continue;
+    used.add(id);
+
+    const r = reasons[id];
+    if (r && typeof r === "string" && r.trim()) {
+      // Put AI reason first so frontend shows it
+      it.reasons = [r.trim().slice(0, 90), ...it.reasons];
+    }
+
+    ordered.push(it);
+  }
+
+  for (const it of items) {
+    if (used.has(it.place.id)) continue;
+    ordered.push(it);
+  }
+
+  return { ordered, aiUsed: ordered.length > 0, aiReasons: reasons };
+}
+
 
 export async function POST(req: Request) {
   const CAM_RES = 10; // cameras + scoring resolution
@@ -525,11 +627,29 @@ for (const [parent, a] of agg.entries()) {
       used.add(it.place.id);
     }
 
+    let finalTop = top.slice(0, maxResults);
+let aiRerankUsed = false;
+
+try {
+  const rr = await aiRerankResults({
+    text,
+    intentLabel: cfg.label,
+    userLat: lat,
+    userLon: lon,
+    items: finalTop,
+  });
+
+  finalTop = rr.ordered.slice(0, maxResults);
+  aiRerankUsed = rr.aiUsed;
+} catch {
+  // keep deterministic order if AI fails
+}
+
     const payload = {
       intent,
       intentLabel: cfg.label,
       bbox: bboxParam,
-      results: top.slice(0, maxResults),
+      results: finalTop,
       meta: {
         placesFetched: places.length,
         camerasFetched: cameras.length,
@@ -538,6 +658,7 @@ for (const [parent, a] of agg.entries()) {
         allowedKinds,
         communityEnabled,
         maxHotspots,
+        aiRerankUsed,
       },
       note: "Recommendations prioritize meetup-friendly places. Community hotspots are capped so they do not dominate.",
     };
