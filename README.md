@@ -1,91 +1,146 @@
 # BlindSpot
 
-BlindSpot is a community powered safety map that helps people choose safer meetup spots by combining community reports with map signals, then ranking nearby places based on evidence, distance, and context.
+**BlindSpot** is a community powered safety map that helps people choose safer meetup spots by combining **community reports** with **map signals**, then ranking nearby places based on evidence, distance, and context (marketplace sale, first date, night walk, general meetup).
 
-## Smalltalk Mini Category (LabWare)
+---
 
-This repo includes a Smalltalk based analytics generator used to build demo friendly rollups and heatmap JSON from exported Snowflake data. It helps us produce consistent dashboard inputs and sanity check the rollups outside the web app.
+## Smalltalk Mini Category (LabWare / Smalltalk)
 
-### Where Smalltalk is used (files and paths)
+This repo includes a **Smalltalk based analytics generator** used to create demo friendly rollups and sanity check the same metrics we show in the dashboard (heatmaps + trends). This makes it easy for judges to evaluate our analytics logic without needing to run the full web stack.
 
-- `smalltalk/BlindSpotAnalytics.st`
-  - Reads exported report events data and generates:
-    - daily trends (yes, no, signage, conflict rate)
-    - per H3 cell rollups (heatmap style aggregates)
-  - Outputs JSON files you can use for demo, debugging, or offline playback.
+### Where Smalltalk is used (exact paths)
 
-- `smalltalk/README.md`
-  - Short instructions for running the Smalltalk script and expected outputs.
+- `smalltalk/BlindSpotAnalytics.st`  
+  Smalltalk script that reads exported report events data and generates:
+  - daily trends (yes, no, signage, conflict rate)
+  - per H3 cell rollups for heatmaps (day + H3)
 
-- Optional helper script:
-  - `smalltalk/run.sh`
-  - One command wrapper to run the Smalltalk generator (Pharo headless).
+- `smalltalk/README.md`  
+  How to run the script (Pharo) and what outputs it produces.
+
+- `smalltalk/input/report_events.jsonl`  
+  Example input format (one JSON object per line, exported from Snowflake).
+
+- `smalltalk/output/`  
+  Output JSON artifacts created by the script:
+  - `trends_daily.json`
+  - `heatmap_daily_res10.json`
 
 If you are judging Smalltalk usage, start here:
-`smalltalk/README.md`
+**`smalltalk/README.md`**
 
 ---
 
-## What the app does
+## Inspiration
 
-### 1) Interactive safety map
-- Users explore a map (MapLibre + DeckGL).
-- The UI visualizes:
-  - camera marker density from map data
-  - community report heatmap by H3 cells
-  - places like cafes, malls, libraries, police stations
+Safety advice is usually generic, but real safety is **location specific**. People already try to meet near places like police stations, busy cafes, or malls, but it is hard to know:
+- what is actually nearby,
+- what the community has seen there (cameras, signage),
+- and whether reports conflict.
 
-### 2) Community reporting
-Users can click a map cell and submit:
+BlindSpot turns those signals into something actionable in seconds.
+
+---
+
+## What it does
+
+### 1) Community reporting (H3 grid)
+Users can click the map and submit a report for the selected area:
 - camera present or camera absent
 - a short note
-- place identity (name, kind, source)
-- structured details (indoors, lighting, crowd, time of day, camera location)
+- optional place identity (name, kind, source)
+- structured context (indoors/outdoors, lighting, crowd, time of day, camera location)
 
-### 3) AI recommendations
-Users type something like:
-- "meeting marketplace buyer"
-- "going to study"
-- "walking at night"
+Reports are shown back as a heatmap, with “community confirmed” tiers and conflict highlighting.
 
-The backend classifies intent and recommends nearby spots, prioritizing:
-1) community evidence (yes, signage, conflict penalties)
+### 2) AI recommendations
+Users can type a request like:
+- “meeting someone from marketplace”
+- “going to study”
+- “walking at night”
+
+The backend classifies the intent and recommends nearby spots (cafe, mall, police station, etc.) while prioritizing:
+1) community evidence (yes/no reports + signage + confidence)
 2) distance
-3) camera markers density
+3) camera markers density from map data
 
-### 4) Voice mode
-The app can read recommendations aloud and lets the user say:
+### 3) Voice mode (hands free)
+BlindSpot can read the top recommendations aloud and let the user pick:
 - option 1, option 2, repeat, new request, stop
 
-### 5) Snowflake analytics dashboard
-There is a dashboard UI that loads Snowflake views for:
-- heatmaps and confidence tiers
-- daily trends and overview metrics
+### 4) Analytics dashboard (Snowflake)
+Every report is mirrored into Snowflake to support:
+- heatmaps by H3 over time
+- daily trends (yes/no/signage)
 - conflict rate and confirmed cell rollups
+- stakeholder friendly dashboard views
 
 ---
 
-## Repo structure (high level)
+## How it is built (high level)
 
-- `app/`
-  - Main Next.js app pages and API routes
-- `app/api/report/route.ts`
-  - Accepts reports, stores in Postgres, mirrors into Snowflake, returns the structured response
-- `app/api/recommend/route.ts`
-  - Intent classification, candidate generation, scoring, optional AI rerank
-- `app/api/reviews/route.ts`
-  - Aggregates nearby evidence around a selected point
-- `app/api/analytics/*`
-  - Reads Snowflake views for heatmap, trends, overview
-- `lib/snowflakeSql.ts`
-  - Snowflake connection and query helpers (JWT key pair auth)
-- `smalltalk/`
-  - Smalltalk analytics generator used for rollups and demo artifacts
+### Frontend
+- Next.js (App Router) + React + TypeScript
+- MapLibre + DeckGL for layers (cells, markers, highlights)
+- H3 (h3-js) for stable spatial aggregation
+
+Key UI files:
+- Main map UI: `app/page.tsx` (or wherever your home map lives)
+- Analytics dashboard UI: `app/dashboard/page.tsx`
+
+### Backend (Next.js API routes)
+Key endpoints:
+- **Reporting**: `app/api/report/route.ts`  
+  Validates submissions, runs moderation + summary, stores in Postgres, mirrors into Snowflake.
+- **Recommendations**: `app/api/recommend/route.ts`  
+  Intent classification, candidate building, scoring, optional AI rerank.
+- **Reviews / nearby evidence**: `app/api/reviews/route.ts`  
+  Aggregates nearby report evidence for the selected location.
+- **Analytics (Snowflake)**:
+  - `app/api/analytics/overview/route.ts`
+  - `app/api/analytics/trends/route.ts`
+  - `app/api/analytics/heatmap/route.ts`
+
+### Data + AI
+- Postgres: live app storage for reports
+- Snowflake: analytics warehouse and dashboard views
+- Gemini API: moderation + structured summaries
+- Overpass API: public place guard
+- ElevenLabs: TTS for voice mode (with browser TTS fallback)
+
+---
+
+## Snowflake analytics (what is stored and how it is used)
+
+### Raw events table
+- `CIVICFIX.RAW.REPORT_EVENTS`
+
+### Views powering the dashboard
+- `CIVICFIX.MART.HEATMAP_DAILY_RES10`
+- `CIVICFIX.MART.HEATMAP_HOURLY_RES10`
+- `CIVICFIX.MART.TRENDS_DAILY`
+- `CIVICFIX.MART.OVERVIEW_LAST_7D`
+- `CIVICFIX.MART.LATEST_CONTEXT_RES10`
+
+These views let the UI load fast and keep the dashboard logic simple.
+
+---
+
+## Text to Speech (ElevenLabs)
+
+BlindSpot includes a Text to Speech endpoint used by Voice Mode to read recommendations and summaries out loud.
+
+**Location in repo:**
+- `app/api/tts/route.ts`
+
+**What it does:**
+- Accepts `{ text }` and returns an `audio/mpeg` response
+- Uses ElevenLabs `eleven_turbo_v2` (cheaper for demos)
+- Handles quota exceeded and rate limit cases cleanly
 
 ---
 
 ## Built with
-
 - TypeScript
 - Next.js (React, App Router)
 - MapLibre + react-map-gl
@@ -93,9 +148,9 @@ There is a dashboard UI that loads Snowflake views for:
 - H3 (h3-js)
 - PostgreSQL
 - Snowflake
-- Google Gemini API (moderation + summaries)
-- ElevenLabs (TTS) with browser fallback
-- Overpass API (public place guard)
+- Google Gemini API
+- ElevenLabs (TTS)
+- Overpass API
 
 ---
 
@@ -104,7 +159,6 @@ There is a dashboard UI that loads Snowflake views for:
 ### 1) Install
 ```bash
 npm install
-
 2) Environment variables
 
 Create .env.local:
@@ -125,13 +179,7 @@ SNOWFLAKE_WAREHOUSE=...
 SNOWFLAKE_DATABASE=CIVICFIX
 SNOWFLAKE_SCHEMA=RAW
 SNOWFLAKE_PRIVATE_KEY_B64=... (base64 of PKCS8 private key pem)
-
 3) Run
-
 npm run dev
-
-Open:
-
-App: http://localhost:3000
-
-Dashboard: http://localhost:3000/dashboard (if your route is set up there)
+Try it out:
+  https://coral-app-258o8.ondigitalocean.app/
